@@ -314,7 +314,8 @@ function checkInMultipleSeats(group, day, timeslot, seatIds) {
             const status = data[i][2];
             const name = data[i][3] || '';
 
-            if (status === "予約済") {
+            // 予約済みまたは確保状態の座席をチェックイン可能にする
+            if (status === "予約済" || status === "確保") {
               sheet.getRange(i + 2, 5).setValue("済");
               successCount++;
             } else {

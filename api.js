@@ -19,12 +19,11 @@ class GasAPI {
               script.parentNode.removeChild(script); // スクリプトタグを削除
             }
             
-            if (data.success === false) {
-              console.error(`API Error (${functionName}): ${data.error}`);
-              this._reportError(data.error);
-              reject(new Error(data.error || '処理エラーが発生しました。'));
-            } else {
+            // success: falseの場合も正常なレスポンスとして扱う
+            if (data && typeof data === 'object') {
               resolve(data);
+            } else {
+              reject(new Error('無効なAPIレスポンスです'));
             }
           } catch (e) {
             console.error('API response cleanup failed:', e);

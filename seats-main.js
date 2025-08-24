@@ -80,7 +80,7 @@ window.onload = async () => {
     console.log("===== 座席データ詳細情報終了 =====");
     
     if (seatData.success === false) {
-      const errorMsg = seatData.error || 'データ読み込みに失敗しました';
+      const errorMsg = seatData.error || seatData.message || 'データ読み込みに失敗しました';
       console.error('座席データ読み込み失敗:', errorMsg);
       document.getElementById('error-message').textContent = 'データ読み込み失敗: ' + errorMsg;
       document.getElementById('error-container').style.display = 'flex';
@@ -293,7 +293,7 @@ function handleSeatClick(seatData) {
 
 // 管理者モードでの座席クリック処理
 function handleAdminSeatClick(seatData) {
-  // チェックイン可能な座席のみ選択可能
+  // チェックイン可能な座席のみ選択可能（確保ステータスも含む）
   if (seatData.status !== 'to-be-checked-in' && seatData.status !== 'reserved') {
     console.log('この座席はチェックインできません:', seatData.status);
     return;
@@ -516,6 +516,8 @@ async function checkInSelected() {
       }
     } else {
       alert(`チェックインエラー：\n${response.message}`);
+      // エラーが発生した場合も操作状態を終了
+      endUserInteraction();
     }
   } catch (error) {
     console.error('チェックインエラー:', error);
