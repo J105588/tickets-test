@@ -144,6 +144,11 @@ class GasAPI {
     const response = await this._callApi('checkInSeat', [group, day, timeslot, seatId]);
     return response;
   }
+
+  static async checkInMultipleSeats(group, day, timeslot, seatIds) {
+    const response = await this._callApi('checkInMultipleSeats', [group, day, timeslot, seatIds]);
+    return response;
+  }
 }
 
 export default GasAPI;

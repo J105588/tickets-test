@@ -453,4 +453,7 @@ input:checked+.slider:before {
     /* Adjust as needed */
     z-index: 1;
     /* Ensure it's above other seat content */
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
 }

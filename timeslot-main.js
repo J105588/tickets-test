@@ -37,12 +37,21 @@ window.selectTimeslot = selectTimeslot;
 function selectTimeslot(day, timeslot) {
   // URLから管理者モードかどうかを判断
   const isAdmin = urlParams.get('admin') === 'true';
+  
+  // 現在のモードをLocalStorageから取得
+  const currentMode = localStorage.getItem('currentMode') || 'normal';
+  
   let targetPage = 'seats.html';
   let additionalParams = '';
 
   // 管理者モードなら、移動先のURLにもadmin=trueパラメータを付与
   if (isAdmin) {
     additionalParams = '&admin=true';
+  }
+
+  // walkinモードの場合はwalkin.htmlにリダイレクト
+  if (currentMode === 'walkin') {
+    targetPage = 'walkin.html';
   }
 
   const url = `${targetPage}?group=${encodeURIComponent(group)}&day=${day}&timeslot=${timeslot}${additionalParams}`;

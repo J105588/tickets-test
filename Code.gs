@@ -40,6 +40,7 @@ function doPost(e) {
       'getSeatData': getSeatData,
       'reserveSeats': reserveSeats,
       'checkInSeat': checkInSeat,
+      'checkInMultipleSeats': checkInMultipleSeats,
       'assignWalkInSeat': assignWalkInSeat,
       'verifyModePassword': verifyModePassword,
       'getAllTimeslotsForGroup': getAllTimeslotsForGroup,
@@ -272,6 +273,70 @@ function checkInSeat(group, day, timeslot, seatId) {
     } catch (e) {
       Logger.log(`checkInSeat Error for ${group}-${day}-${timeslot}: ${e.message}\n${e.stack}`);
       return { success: false, message: e.message };
+    } finally {
+      lock.releaseLock();
+    }
+  } else {
+    return { success: false, message: "処理が混み合っています。再度お試しください。" };
+  }
+}
+
+/**
+ * 複数の座席をチェックインする。
+ */
+function checkInMultipleSeats(group, day, timeslot, seatIds) {
+  if (!Array.isArray(seatIds) || seatIds.length === 0) {
+    return { success: false, message: 'チェックインする座席が選択されていません。' };
+  }
+
+  const invalidSeats = seatIds.filter(seatId => !isValidSeatId(seatId));
+  if (invalidSeats.length > 0) {
+    return { success: false, message: `無効な座席IDが含まれています: ${invalidSeats.join(', ')}` };
+  }
+
+  const lock = LockService.getScriptLock();
+  if (lock.tryLock(15000)) {
+    try {
+      const sheet = getSheet(group, day, timeslot, 'SEAT');
+      if (!sheet) throw new Error("対象の座席シートが見つかりません。");
+
+      const data = sheet.getRange("A2:E" + sheet.getLastRow()).getValues();
+      let successCount = 0;
+      let errorMessages = [];
+
+      for (const seatId of seatIds) {
+        let found = false;
+        for (let i = 0; i < data.length; i++) {
+          const currentSeatId = String(data[i][0]) + String(data[i][1]);
+          if (currentSeatId === seatId) {
+            found = true;
+            const status = data[i][2];
+            const name = data[i][3] || '';
+
+            if (status === "予約済") {
+              sheet.getRange(i + 2, 5).setValue("済");
+              successCount++;
+            } else {
+              errorMessages.push(`${seatId} はチェックインできない状態です。（現在の状態: ${status}）`);
+            }
+            break;
+          }
+        }
+        if (!found) {
+          errorMessages.push(`${seatId} がシートに見つかりませんでした。`);
+        }
+      }
+
+      SpreadsheetApp.flush();
+      if (successCount > 0) {
+        return { success: true, message: `${successCount}件の座席をチェックインしました。`, checkedInCount: successCount };
+      } else {
+        return { success: false, message: errorMessages.length > 0 ? errorMessages.join('\n') : 'チェックインできる座席が見つかりませんでした。' };
+      }
+
+    } catch (e) {
+      Logger.log(`checkInMultipleSeats Error for ${group}-${day}-${timeslot}: ${e.message}\n${e.stack}`);
+      return { success: false, message: `チェックインエラー: ${e.message}` };
     } finally {
       lock.releaseLock();
     }

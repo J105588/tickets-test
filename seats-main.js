@@ -227,13 +227,40 @@ function createSeatElement(seatData) {
   const seat = document.createElement('div');
   seat.className = `seat ${seatData.status}`;
   seat.dataset.id = seatData.id;
-  seat.textContent = seatData.id;
   
+  // 座席IDを表示
+  const seatIdEl = document.createElement('div');
+  seatIdEl.className = 'seat-id';
+  seatIdEl.textContent = seatData.id;
+  seat.appendChild(seatIdEl);
+  
+  // 管理者モードでチェックボックスを追加
+  const currentMode = localStorage.getItem('currentMode') || 'normal';
+  const isAdminMode = currentMode === 'admin' || IS_ADMIN;
+  
+  if (isAdminMode && seatData.status === 'to-be-checked-in') {
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'check-in-checkbox';
+    checkbox.dataset.seatId = seatData.id;
+    checkbox.dataset.seatName = seatData.name || '';
+    seat.appendChild(checkbox);
+  }
+  
+  // 名前を表示（長い場合は省略）
   if (seatData.name && seatData.status !== 'available') {
-    const tooltip = document.createElement('span');
-    tooltip.className = 'tooltip';
-    tooltip.textContent = seatData.name;
-    seat.appendChild(tooltip);
+    const nameEl = document.createElement('div');
+    nameEl.className = 'seat-name';
+    
+    // 名前が長すぎる場合は省略表示
+    if (seatData.name.length > 8) {
+      nameEl.textContent = seatData.name.substring(0, 8) + '...';
+      nameEl.title = seatData.name; // ツールチップで全文表示
+    } else {
+      nameEl.textContent = seatData.name;
+    }
+    
+    seat.appendChild(nameEl);
   }
   
   seat.addEventListener('click', () => handleSeatClick(seatData));
@@ -291,3 +318,53 @@ function updateSelectedSeatsDisplay() {
 // グローバル関数として設定
 window.showLoader = showLoader;
 window.toggleAutoRefresh = toggleAutoRefresh;
+window.checkInSelected = checkInSelected;
+
+// 複数同時チェックイン機能
+async function checkInSelected() {
+  const checkboxes = document.querySelectorAll('.check-in-checkbox:checked');
+  if (checkboxes.length === 0) {
+    alert('チェックインする座席を選択してください。');
+    return;
+  }
+
+  const selectedSeats = Array.from(checkboxes).map(cb => ({
+    id: cb.dataset.seatId,
+    name: cb.dataset.seatName
+  }));
+
+  // 選択された座席の一覧を表示
+  const seatList = selectedSeats.map(seat => `${seat.id}：${seat.name}`).join('\n');
+  const confirmMessage = `以下の座席をチェックインしますか？\n\n${seatList}`;
+  
+  if (!confirm(confirmMessage)) {
+    return;
+  }
+
+  showLoader(true);
+  
+  try {
+    const seatIds = selectedSeats.map(seat => seat.id);
+    const response = await GasAPI.checkInMultipleSeats(GROUP, DAY, TIMESLOT, seatIds);
+    
+    if (response.success) {
+      alert(`チェックインが完了しました！\n\n${response.message}`);
+      // 座席データを再読み込み
+      const currentMode = localStorage.getItem('currentMode') || 'normal';
+      const isAdminMode = currentMode === 'admin' || IS_ADMIN;
+      const seatData = await GasAPI.getSeatData(GROUP, DAY, TIMESLOT, isAdminMode);
+      
+      if (seatData.success) {
+        drawSeatMap(seatData.seatMap);
+        updateLastUpdateTime();
+      }
+    } else {
+      alert(`チェックインエラー：\n${response.message}`);
+    }
+  } catch (error) {
+    console.error('チェックインエラー:', error);
+    alert(`チェックインエラー：\n${error.message}`);
+  } finally {
+    showLoader(false);
+  }
+}
