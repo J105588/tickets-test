@@ -48,6 +48,27 @@
         </div>
     </div>
 
+    <!-- 自動更新設定ボタン -->
+    <button id="auto-refresh-settings-btn" class="auto-refresh-settings-btn" onclick="toggleAutoRefreshSettings()">
+        <span class="gear-icon"></span>
+    </button>
+
+    <!-- 自動更新設定メニュー -->
+    <div id="auto-refresh-settings-panel" class="auto-refresh-settings-panel">
+        <h4>自動更新設定</h4>
+        <div class="refresh-controls">
+            <div class="auto-refresh-toggle">
+                <span>自動更新</span>
+                <label class="switch">
+                    <input type="checkbox" id="auto-refresh-toggle-checkbox" checked>
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div class="last-update" id="last-update-display">最終更新: --:--</div>
+            <button class="refresh-btn" onclick="manualRefresh()">手動更新</button>
+        </div>
+    </div>
+
     <div id="error-container" class="error-container" style="display: none;">
         <div class="error-content">
             <p id="error-message">エラーが発生しました</p>

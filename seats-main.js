@@ -88,6 +88,14 @@ window.onload = async () => {
     drawSeatMap(seatData.seatMap);
     updateLastUpdateTime();
     updateSelectedSeatsDisplay(); // 初期化時に選択された座席数を更新
+    
+    // 自動更新設定の初期化
+    const toggleCheckbox = document.getElementById('auto-refresh-toggle-checkbox');
+    if (toggleCheckbox) {
+      toggleCheckbox.checked = isAutoRefreshEnabled;
+      toggleCheckbox.addEventListener('change', toggleAutoRefresh);
+    }
+    
     startAutoRefresh();
   } catch (error) {
     console.error('サーバー通信失敗:', error);
@@ -180,9 +188,9 @@ function startAutoRefresh() {
     clearInterval(autoRefreshInterval);
   }
   
-  if (isAutoRefreshEnabled) {
+  if (isAutoRefreshEnabled && isPageVisible) {
     autoRefreshInterval = setInterval(async () => {
-      if (isRefreshing) return; // 既に更新中なら何もしない
+      if (isRefreshing || !isPageVisible) return; // 画面が非アクティブの場合は更新しない
       
       isRefreshing = true;
       try {
@@ -208,17 +216,16 @@ function startAutoRefresh() {
 // 自動更新の切り替え
 function toggleAutoRefresh() {
   isAutoRefreshEnabled = !isAutoRefreshEnabled;
-  const toggleBtn = document.getElementById('auto-refresh-toggle');
+  const toggleBtn = document.getElementById('auto-refresh-toggle-checkbox');
   
   if (toggleBtn) {
-    toggleBtn.textContent = isAutoRefreshEnabled ? '自動更新: ON' : '自動更新: OFF';
+    toggleBtn.checked = isAutoRefreshEnabled;
   }
   
-  if (isAutoRefreshEnabled) {
+  if (isAutoRefreshEnabled && isPageVisible) {
     startAutoRefresh();
-  } else if (autoRefreshInterval) {
-    clearInterval(autoRefreshInterval);
-    autoRefreshInterval = null;
+  } else {
+    stopAutoRefresh();
   }
 }
 
@@ -319,6 +326,96 @@ function updateSelectedSeatsDisplay() {
 window.showLoader = showLoader;
 window.toggleAutoRefresh = toggleAutoRefresh;
 window.checkInSelected = checkInSelected;
+window.confirmReservation = confirmReservation;
+window.promptForAdminPassword = promptForAdminPassword;
+window.toggleAutoRefreshSettings = toggleAutoRefreshSettings;
+window.manualRefresh = manualRefresh;
+
+// 自動更新設定メニューの表示制御
+function toggleAutoRefreshSettings() {
+  const panel = document.getElementById('auto-refresh-settings-panel');
+  const overlay = document.getElementById('auto-refresh-overlay');
+  
+  if (panel.classList.contains('show')) {
+    panel.classList.remove('show');
+    if (overlay) overlay.classList.remove('show');
+  } else {
+    panel.classList.add('show');
+    if (overlay) overlay.classList.add('show');
+  }
+}
+
+// 手動更新
+async function manualRefresh() {
+  if (isRefreshing) return;
+  
+  isRefreshing = true;
+  showLoader(true);
+  
+  try {
+    const currentMode = localStorage.getItem('currentMode') || 'normal';
+    const isAdminMode = currentMode === 'admin' || IS_ADMIN;
+    
+    const seatData = await GasAPI.getSeatData(GROUP, DAY, TIMESLOT, isAdminMode);
+    
+    if (seatData.success) {
+      drawSeatMap(seatData.seatMap);
+      updateLastUpdateTime();
+      alert('座席データを更新しました');
+    }
+  } catch (error) {
+    console.error('手動更新エラー:', error);
+    alert('更新に失敗しました: ' + error.message);
+  } finally {
+    showLoader(false);
+    isRefreshing = false;
+  }
+}
+
+// 画面の可視性変更を監視
+let isPageVisible = true;
+document.addEventListener('visibilitychange', () => {
+  isPageVisible = !document.hidden;
+  if (isPageVisible && isAutoRefreshEnabled) {
+    startAutoRefresh();
+  } else {
+    stopAutoRefresh();
+  }
+});
+
+// 自動更新の停止
+function stopAutoRefresh() {
+  if (autoRefreshInterval) {
+    clearInterval(autoRefreshInterval);
+    autoRefreshInterval = null;
+  }
+}
+
+// 管理者パスワード入力関数
+function promptForAdminPassword() {
+  const password = prompt('管理者パスワードを入力してください：');
+  if (!password) return;
+  
+  // サイドバーのモード変更と同じ処理
+  applyModeChange('admin', password);
+}
+
+// モード変更を適用する関数（サイドバーと同じ処理）
+async function applyModeChange(mode, password) {
+  try {
+    const result = await GasAPI.verifyModePassword(mode, password);
+    
+    if (result.success) {
+      localStorage.setItem('currentMode', mode);
+      alert('管理者モードに切り替えました');
+      location.reload(); // ページをリロードして権限を即時反映
+    } else {
+      alert('パスワードが間違っています。');
+    }
+  } catch (error) {
+    alert(`エラーが発生しました: ${error.message}`);
+  }
+}
 
 // 複数同時チェックイン機能
 async function checkInSelected() {
@@ -368,3 +465,45 @@ async function checkInSelected() {
     showLoader(false);
   }
 }
+
+// 予約確認・実行関数
+async function confirmReservation() {
+  if (selectedSeats.length === 0) {
+    alert('予約する座席を選択してください。');
+    return;
+  }
+
+  const confirmMessage = `以下の座席で予約しますか？\n\n${selectedSeats.join(', ')}`;
+  if (!confirm(confirmMessage)) {
+    return;
+  }
+
+  showLoader(true);
+  
+  try {
+    const response = await GasAPI.reserveSeats(GROUP, DAY, TIMESLOT, selectedSeats);
+    
+    if (response.success) {
+      alert(response.message || '予約が完了しました！');
+      // 座席データを再読み込み
+      const currentMode = localStorage.getItem('currentMode') || 'normal';
+      const isAdminMode = currentMode === 'admin' || IS_ADMIN;
+      const seatData = await GasAPI.getSeatData(GROUP, DAY, TIMESLOT, isAdminMode);
+      
+      if (seatData.success) {
+        drawSeatMap(seatData.seatMap);
+        updateLastUpdateTime();
+        selectedSeats = []; // 選択をクリア
+        updateSelectedSeatsDisplay();
+      }
+    } else {
+      alert(`予約エラー：\n${response.message}`);
+    }
+  } catch (error) {
+    console.error('予約エラー:', error);
+    alert(`予約エラー：\n${error.message}`);
+  } finally {
+    showLoader(false);
+  }
+}
+

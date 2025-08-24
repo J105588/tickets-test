@@ -92,3 +92,8 @@ async function issueWalkinTicket() {
 
 // ボタン押下時に実行されるようにイベントリスナーを追加
 document.getElementById('walkin-btn').addEventListener('click', issueWalkinTicket);
+
+// グローバル関数として設定
+window.issueWalkinTicket = issueWalkinTicket;
+window.showLoader = showLoader;
+window.toggleSidebar = toggleSidebar;
