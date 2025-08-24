@@ -18,6 +18,8 @@ let autoRefreshInterval = null;
 let lastUpdateTime = null;
 let isRefreshing = false;
 let settingsOpen = false;
+let isUserInteracting = false; // ユーザーが操作中かどうか
+let interactionTimeout = null; // 操作終了を検知するためのタイマー
 
 // APIエンドポイントを設定
 const apiEndpoint = GAS_API_URL;
@@ -191,9 +193,10 @@ function startAutoRefresh() {
     clearInterval(autoRefreshInterval);
   }
   
-  if (isAutoRefreshEnabled && isPageVisible) {
+  // ユーザーが操作中でない場合のみ自動更新を開始
+  if (isAutoRefreshEnabled && isPageVisible && !isUserInteracting) {
     autoRefreshInterval = setInterval(async () => {
-      if (isRefreshing || !isPageVisible) return; // 画面が非アクティブの場合は更新しない
+      if (isRefreshing || !isPageVisible || isUserInteracting) return; // 操作中は更新しない
       
       isRefreshing = true;
       try {
@@ -299,6 +302,9 @@ function handleAdminSeatClick(seatData) {
   const seatElement = document.querySelector(`[data-id="${seatData.id}"]`);
   if (!seatElement) return;
 
+  // ユーザー操作開始
+  startUserInteraction();
+
   // 座席の選択状態を切り替え
   if (seatElement.classList.contains('selected-for-checkin')) {
     // 選択解除
@@ -326,6 +332,9 @@ function handleNormalSeatClick(seatData) {
 
   const seatElement = document.querySelector(`[data-id="${seatData.id}"]`);
   if (!seatElement) return;
+
+  // ユーザー操作開始
+  startUserInteraction();
 
   // 座席の選択状態を切り替え
   if (seatElement.classList.contains('selected')) {
@@ -370,6 +379,8 @@ window.manualRefresh = manualRefresh;
 window.showModeChangeModal = showModeChangeModal;
 window.closeModeModal = closeModeModal;
 window.applyModeChange = applyModeChange;
+window.startUserInteraction = startUserInteraction;
+window.endUserInteraction = endUserInteraction;
 
 // 自動更新設定メニューの表示制御
 function toggleAutoRefreshSettings() {
@@ -500,6 +511,8 @@ async function checkInSelected() {
         // 選択をクリア
         selectedSeats.length = 0;
         updateSelectedSeatsDisplay();
+        // ユーザー操作終了
+        endUserInteraction();
       }
     } else {
       alert(`チェックインエラー：\n${response.message}`);
@@ -541,6 +554,8 @@ async function confirmReservation() {
         updateLastUpdateTime();
         selectedSeats = []; // 選択をクリア
         updateSelectedSeatsDisplay();
+        // ユーザー操作終了
+        endUserInteraction();
       }
     } else {
       alert(`予約エラー：\n${response.message}`);
@@ -550,6 +565,42 @@ async function confirmReservation() {
     alert(`予約エラー：\n${error.message}`);
   } finally {
     showLoader(false);
+  }
+}
+
+// ユーザー操作の開始を検知
+function startUserInteraction() {
+  isUserInteracting = true;
+  
+  // 既存のタイマーをクリア
+  if (interactionTimeout) {
+    clearTimeout(interactionTimeout);
+  }
+  
+  // 操作終了を検知するタイマーを設定（5秒後）
+  interactionTimeout = setTimeout(() => {
+    isUserInteracting = false;
+    // 操作終了後、自動更新を再開
+    if (isAutoRefreshEnabled && isPageVisible) {
+      startAutoRefresh();
+    }
+  }, 5000);
+  
+  // 操作中は自動更新を停止
+  stopAutoRefresh();
+}
+
+// ユーザー操作の終了を検知
+function endUserInteraction() {
+  isUserInteracting = false;
+  if (interactionTimeout) {
+    clearTimeout(interactionTimeout);
+    interactionTimeout = null;
+  }
+  
+  // 操作終了後、自動更新を再開
+  if (isAutoRefreshEnabled && isPageVisible) {
+    startAutoRefresh();
   }
 }
 
