@@ -96,6 +96,7 @@ function doGet(e) {
         'getSeatData': getSeatData,
         'reserveSeats': reserveSeats,
         'checkInSeat': checkInSeat,
+        'checkInMultipleSeats': checkInMultipleSeats,
         'assignWalkInSeat': assignWalkInSeat,
         'verifyModePassword': verifyModePassword,
         'getAllTimeslotsForGroup': getAllTimeslotsForGroup,

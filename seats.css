@@ -385,6 +385,24 @@ input:checked+.slider:before {
     color: #6c757d;
 }
 
+.seat.selected-for-checkin {
+    background: #17a2b8; /* チェックイン選択中 */
+    color: #fff;
+    box-shadow: 0 0 12px 2px #17a2b8;
+    transform: translateY(-2px);
+}
+
+.seat.checkin-selectable {
+    cursor: pointer;
+    border: 2px solid #17a2b8;
+}
+
+.seat.checkin-selectable:hover {
+    background: #17a2b8;
+    color: #fff;
+    transform: translateY(-2px);
+}
+
 .admin-login-btn {
     position: absolute;
     top: 15px;

@@ -241,17 +241,14 @@ function createSeatElement(seatData) {
   seatIdEl.textContent = seatData.id;
   seat.appendChild(seatIdEl);
   
-  // 管理者モードでチェックボックスを追加
+  // 管理者モードでチェックイン可能な座席を選択可能にする
   const currentMode = localStorage.getItem('currentMode') || 'normal';
   const isAdminMode = currentMode === 'admin' || IS_ADMIN;
   
-  if (isAdminMode && seatData.status === 'to-be-checked-in') {
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.className = 'check-in-checkbox';
-    checkbox.dataset.seatId = seatData.id;
-    checkbox.dataset.seatName = seatData.name || '';
-    seat.appendChild(checkbox);
+  if (isAdminMode && (seatData.status === 'to-be-checked-in' || seatData.status === 'reserved')) {
+    // チェックイン可能な座席を選択可能にする
+    seat.classList.add('checkin-selectable');
+    seat.dataset.seatName = seatData.name || '';
   }
   
   // 名前を表示（長い場合は省略）
@@ -276,12 +273,48 @@ function createSeatElement(seatData) {
 
 // 座席クリック時の処理
 function handleSeatClick(seatData) {
-  // 管理者モードの場合は何もしない
   const currentMode = localStorage.getItem('currentMode') || 'normal';
-  if (currentMode === 'admin' || IS_ADMIN) {
+  const isAdminMode = currentMode === 'admin' || IS_ADMIN;
+  
+  if (isAdminMode) {
+    // 管理者モード：チェックイン可能な座席を選択
+    handleAdminSeatClick(seatData);
+  } else {
+    // 通常モード：予約可能な座席を選択
+    handleNormalSeatClick(seatData);
+  }
+}
+
+// 管理者モードでの座席クリック処理
+function handleAdminSeatClick(seatData) {
+  // チェックイン可能な座席のみ選択可能
+  if (seatData.status !== 'to-be-checked-in' && seatData.status !== 'reserved') {
+    console.log('この座席はチェックインできません:', seatData.status);
     return;
   }
 
+  const seatElement = document.querySelector(`[data-id="${seatData.id}"]`);
+  if (!seatElement) return;
+
+  // 座席の選択状態を切り替え
+  if (seatElement.classList.contains('selected-for-checkin')) {
+    // 選択解除
+    seatElement.classList.remove('selected-for-checkin');
+    selectedSeats = selectedSeats.filter(id => id !== seatData.id);
+  } else {
+    // 選択
+    seatElement.classList.add('selected-for-checkin');
+    selectedSeats.push(seatData.id);
+  }
+
+  // 選択された座席数を表示
+  updateSelectedSeatsDisplay();
+  
+  console.log('チェックイン対象座席:', selectedSeats);
+}
+
+// 通常モードでの座席クリック処理
+function handleNormalSeatClick(seatData) {
   // 利用可能な座席のみ選択可能
   if (seatData.status !== 'available') {
     console.log('この座席は選択できません:', seatData.status);
@@ -410,15 +443,15 @@ function promptForAdminPassword() {
 
 // 複数同時チェックイン機能
 async function checkInSelected() {
-  const checkboxes = document.querySelectorAll('.check-in-checkbox:checked');
-  if (checkboxes.length === 0) {
+  const selectedSeatElements = document.querySelectorAll('.seat.selected-for-checkin');
+  if (selectedSeatElements.length === 0) {
     alert('チェックインする座席を選択してください。');
     return;
   }
 
-  const selectedSeats = Array.from(checkboxes).map(cb => ({
-    id: cb.dataset.seatId,
-    name: cb.dataset.seatName
+  const selectedSeats = Array.from(selectedSeatElements).map(seatEl => ({
+    id: seatEl.dataset.id,
+    name: seatEl.dataset.seatName
   }));
 
   // 選択された座席の一覧を表示
@@ -445,6 +478,9 @@ async function checkInSelected() {
       if (seatData.success) {
         drawSeatMap(seatData.seatMap);
         updateLastUpdateTime();
+        // 選択をクリア
+        selectedSeats.length = 0;
+        updateSelectedSeatsDisplay();
       }
     } else {
       alert(`チェックインエラー：\n${response.message}`);
