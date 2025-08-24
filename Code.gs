@@ -316,6 +316,10 @@ function checkInMultipleSeats(group, day, timeslot, seatIds) {
 
             // 予約済みまたは確保状態の座席をチェックイン可能にする
             if (status === "予約済" || status === "確保") {
+              // 確保状態の場合は、まず予約済みに変更してからチェックイン
+              if (status === "確保") {
+                sheet.getRange(i + 2, 3).setValue("予約済");
+              }
               sheet.getRange(i + 2, 5).setValue("済");
               successCount++;
             } else {
