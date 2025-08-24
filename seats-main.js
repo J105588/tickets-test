@@ -96,6 +96,9 @@ window.onload = async () => {
       toggleCheckbox.addEventListener('change', toggleAutoRefresh);
     }
     
+    // 最終更新時間の初期表示
+    updateLastUpdateTime();
+    
     startAutoRefresh();
   } catch (error) {
     console.error('サーバー通信失敗:', error);
@@ -109,7 +112,7 @@ window.onload = async () => {
 // 最終アップデート時間を取得
 function updateLastUpdateTime() {
   lastUpdateTime = new Date();
-  const lastUpdateEl = document.getElementById('last-update');
+  const lastUpdateEl = document.getElementById('last-update-display');
   if (lastUpdateEl) {
     lastUpdateEl.textContent = `最終更新: ${lastUpdateTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}`;
   } else {
