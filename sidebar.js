@@ -129,6 +129,11 @@ function toggleSidebar() {
     const sidebar = document.getElementById("mySidebar");
     const main = document.getElementById("main-content");
 
+    if (!sidebar || !main) {
+        console.warn('Sidebar or main content element not found');
+        return;
+    }
+
     if (sidebar.style.width === "250px") {
         sidebar.style.width = "0";
         main.style.marginLeft = "0";

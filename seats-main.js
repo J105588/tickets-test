@@ -330,6 +330,9 @@ window.confirmReservation = confirmReservation;
 window.promptForAdminPassword = promptForAdminPassword;
 window.toggleAutoRefreshSettings = toggleAutoRefreshSettings;
 window.manualRefresh = manualRefresh;
+window.showModeChangeModal = showModeChangeModal;
+window.closeModeModal = closeModeModal;
+window.applyModeChange = applyModeChange;
 
 // 自動更新設定メニューの表示制御
 function toggleAutoRefreshSettings() {
@@ -393,28 +396,16 @@ function stopAutoRefresh() {
 
 // 管理者パスワード入力関数
 function promptForAdminPassword() {
-  const password = prompt('管理者パスワードを入力してください：');
-  if (!password) return;
+  // サイドバーのモード変更モーダルを表示
+  showModeChangeModal();
   
-  // サイドバーのモード変更と同じ処理
-  applyModeChange('admin', password);
-}
-
-// モード変更を適用する関数（サイドバーと同じ処理）
-async function applyModeChange(mode, password) {
-  try {
-    const result = await GasAPI.verifyModePassword(mode, password);
-    
-    if (result.success) {
-      localStorage.setItem('currentMode', mode);
-      alert('管理者モードに切り替えました');
-      location.reload(); // ページをリロードして権限を即時反映
-    } else {
-      alert('パスワードが間違っています。');
+  // 管理者モードを選択状態にする
+  setTimeout(() => {
+    const adminRadio = document.querySelector('input[name="mode"][value="admin"]');
+    if (adminRadio) {
+      adminRadio.checked = true;
     }
-  } catch (error) {
-    alert(`エラーが発生しました: ${error.message}`);
-  }
+  }, 100);
 }
 
 // 複数同時チェックイン機能
