@@ -365,6 +365,7 @@ window.checkInSelected = checkInSelected;
 window.confirmReservation = confirmReservation;
 window.promptForAdminPassword = promptForAdminPassword;
 window.toggleAutoRefreshSettings = toggleAutoRefreshSettings;
+window.closeAutoRefreshSettings = closeAutoRefreshSettings;
 window.manualRefresh = manualRefresh;
 window.showModeChangeModal = showModeChangeModal;
 window.closeModeModal = closeModeModal;
@@ -376,12 +377,20 @@ function toggleAutoRefreshSettings() {
   const overlay = document.getElementById('auto-refresh-overlay');
   
   if (panel.classList.contains('show')) {
-    panel.classList.remove('show');
-    if (overlay) overlay.classList.remove('show');
+    closeAutoRefreshSettings();
   } else {
     panel.classList.add('show');
     if (overlay) overlay.classList.add('show');
   }
+}
+
+// 自動更新設定メニューを閉じる
+function closeAutoRefreshSettings() {
+  const panel = document.getElementById('auto-refresh-settings-panel');
+  const overlay = document.getElementById('auto-refresh-overlay');
+  
+  if (panel) panel.classList.remove('show');
+  if (overlay) overlay.classList.remove('show');
 }
 
 // 手動更新
@@ -419,6 +428,13 @@ document.addEventListener('visibilitychange', () => {
     startAutoRefresh();
   } else {
     stopAutoRefresh();
+  }
+});
+
+// ESCキーで設定メニューを閉じる
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    closeAutoRefreshSettings();
   }
 });
 

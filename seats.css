@@ -539,3 +539,18 @@ input:checked+.slider:before {
     border-bottom: 1px solid #eee;
     padding-bottom: 8px;
 }
+
+.auto-refresh-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    z-index: 98;
+    display: none;
+}
+
+.auto-refresh-overlay.show {
+    display: block;
+}
