@@ -1,0 +1,2131 @@
+﻿
+[api.js]
+import { GAS_API_URL, DEBUG_MODE, debugLog } from './config.js';
+
+class GasAPI {
+  static async _callApi(functionName, params = []) {
+    debugLog(`API Call: ${functionName}`, params);
+
+    // CORSを使用してfetchでデータを取得
+    try {
+      const response = await fetch(GAS_API_URL, {
+        method: 'POST', // POSTメソッドを使用
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          func: functionName,
+          params: params
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTPエラー: ${response.status}`);
+      }
+
+      const data = await response.json();
+      debugLog(`API Response: ${functionName}`, data);
+
+      if (!data.success) {
+        console.error(`API Error (${functionName}): ${data.error}`);
+        throw new Error(data.error || '処理エラーが発生しました。');
+      }
+
+      return data;
+    } catch (error) {
+      console.error(`API通信に失敗しました: ${error.message}`);
+      throw error; // エラーを再スローして、呼び出し元でハンドルできるようにする
+    }
+  }
+
+  static async getAllTimeslotsForGroup(group) {
+    const response = await this._callApi('getAllTimeslotsForGroup', [group]);
+    return response.data; // データを返す
+  }
+
+  static async testApi() {
+    const response = await this._callApi('testApi');
+    return response.data;
+  }
+
+  static async verifyModePassword(mode, password) {
+    const response = await this._callApi('verifyModePassword', [mode, password]);
+    return response;
+  }
+
+  static async getSeatData(group, day, timeslot, isAdmin) {
+    const response = await this._callApi('getSeatData', [group, day, timeslot, isAdmin]);
+    return response;
+  }
+
+  static async assignWalkInSeat(group, day, timeslot) {
+    const response = await this._callApi('assignWalkInSeat', [group, day, timeslot]);
+    return response;
+  }
+
+  static async reserveSeats(group, day, timeslot, selectedSeats) {
+    const response = await this._callApi('reserveSeats', [group, day, timeslot, selectedSeats]);
+    return response;
+  }
+
+  static async checkInSeat(group, day, timeslot, seatId) {
+    const response = await this._callApi('checkInSeat', [group, day, timeslot, seatId]);
+    return response;
+  }
+}
+
+export default GasAPI;
+
+[config.js]
+// config.js
+const GAS_API_URL = "https://script.google.com/macros/s/AKfycbyR1BjAigNCMhqveOWxwyWDi_R7KR7y5s6j_xY9M5iua8NeBpZP95JckAPKufXNwf0d/exec";
+const DEBUG_MODE = true;
+
+function debugLog(message, obj = null) {
+  if (DEBUG_MODE) {
+    console.log(message, obj || '');
+  }
+}
+
+// 個別にエクスポート
+export { GAS_API_URL, DEBUG_MODE, debugLog };
+
+[index-main.js]
+import { loadSidebar, toggleSidebar, showModeChangeModal } from './sidebar.js';    
+loadSidebar();
+
+// グローバルスコープに関数を登録
+window.toggleSidebar = toggleSidebar;
+window.showModeChangeModal = showModeChangeModal;
+
+[seats-main.js]
+// seats-main.js
+import GasAPI from './api.js';
+import { loadSidebar, toggleSidebar, showModeChangeModal } from './sidebar.js';
+import { GAS_API_URL, DEBUG_MODE, debugLog } from './config.js';
+
+/**
+ * 座席選択画面のメイン処理
+ */
+const urlParams = new URLSearchParams(window.location.search);
+const GROUP = urlParams.get('group');
+const DAY = urlParams.get('day');
+const TIMESLOT = urlParams.get('timeslot');
+const IS_ADMIN = urlParams.get('admin') === 'true';
+
+let selectedSeats = [];
+let isAutoRefreshEnabled = true;
+let autoRefreshInterval = null;
+let lastUpdateTime = null;
+let isRefreshing = false;
+let settingsOpen = false;
+
+// APIエンドポイントを設定
+const apiEndpoint = GAS_API_URL;
+//const api = new GasAPI(apiEndpoint); // ★削除: apiオブジェクトの作成方法を修正
+const api = new GasAPI();
+
+// 初期化
+window.onload = async () => {
+  loadSidebar();
+
+  const groupName = isNaN(parseInt(GROUP)) ? GROUP : GROUP + '組';
+  document.getElementById('performance-info').textContent = `${groupName} ${DAY}日目 ${TIMESLOT}`;
+
+  // 管理者モードの表示制御
+  if (IS_ADMIN) {
+    document.getElementById('admin-indicator').style.display = 'block';
+    document.getElementById('admin-login-btn').style.display = 'none';
+    document.getElementById('submit-button').style.display = 'none';
+    document.getElementById('check-in-selected-btn').style.display = 'block';
+  } else {
+    document.getElementById('admin-indicator').style.display = 'none';
+    document.getElementById('admin-login-btn').style.display = 'block';
+    document.getElementById('submit-button').style.display = 'block';
+    document.getElementById('check-in-selected-btn').style.display = 'none';
+  }
+
+  showLoader(true);
+
+  try {
+    const seatData = await api.getSeatData(GROUP, DAY, TIMESLOT, IS_ADMIN);
+    
+    debugLog("Received seatData:", seatData);
+    
+    if (seatData.success === false) {
+      alert('データ読み込み失敗: ' + seatData.error);
+      return;
+    }
+
+    drawSeatMap(seatData.seatMap);
+    updateLastUpdateTime();
+    startAutoRefresh();
+  } catch (error) {
+    alert('サーバー通信失敗: ' + error.message);
+  } finally {
+    showLoader(false);
+  }
+};
+
+// 最終アップデート時間を取得
+function updateLastUpdateTime() {
+  lastUpdateTime = new Date();
+  const lastUpdateEl = document.getElementById('last-update');
+  lastUpdateEl.textContent = `最終更新: ${lastUpdateTime.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+// ローダー表示制御
+function showLoader(visible) {
+  const loader = document.getElementById('loading-modal');
+  if (loader) {
+    loader.style.display = visible ? 'block' : 'none';
+  }
+}
+
+// 座席マップを描画する関数
+function drawSeatMap(seatMap) {
+  const container = document.getElementById('seat-map-container');
+  container.innerHTML = '';
+
+  const layout = {
+    main: { rows: ['A', 'B', 'C', 'D'], cols: 12, passageAfter: 6 },
+    sub: { rows: ['E'], frontCols: 3, backCols: 3, passagePosition: 3 }
+  };
+
+  const mainSection = document.createElement('div');
+  mainSection.className = 'seat-section';
+
+  layout.main.rows.forEach(rowLabel => {
+      const rowEl = document.createElement('div');
+      rowEl.className = 'seat-row';
+      for (let i = 1; i <= layout.main.cols; i++) {
+          const seatId = rowLabel + i;
+          const seatData = seatMap[seatId] || { id: seatId, status: 'unavailable', name: null };
+          rowEl.appendChild(createSeatElement(seatData));
+
+          if (i === layout.main.passageAfter) {
+              const passage = document.createElement('div');
+              passage.className = 'passage';
+              rowEl.appendChild(passage);
+          }
+      }
+      mainSection.appendChild(rowEl);
+  });
+
+  container.appendChild(mainSection);
+  // Subsection drawing logic can be added similarly...
+}
+
+// 他の関数も適宜実装
+
+// グローバル関数として設定
+window.showLoader = showLoader;
+
+[sidebar.js]
+import GasAPI from './api.js'; // GasAPIをインポート
+
+const sidebarHTML = `
+  <div id="mySidebar" class="sidebar">
+    <a href="javascript:void(0)" class="closebtn" onclick="toggleSidebar()">&times;</a>
+    <a href="index.html">組選択</a>
+    <div class="mode-section">
+      <div class="mode-title">動作モード</div>
+      <div class="current-mode">現在: <span id="current-mode-display">通常モード</span></div>
+      <button class="change-mode-btn" onclick="showModeChangeModal()">モード変更</button>
+    </div>
+  </div>
+  <div id="mode-change-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <h3>モード変更</h3>
+      <div class="mode-options">
+        <label class="mode-option">
+          <input type="radio" name="mode" value="normal" checked> 
+          <span>通常モード</span>
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="mode" value="admin"> 
+          <span>管理者モード</span>
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="mode" value="walkin"> 
+          <span>当日券モード</span>
+        </label>
+      </div>
+      <div class="password-section">
+        <input type="password" id="mode-password" placeholder="パスワード">
+      </div>
+      <div class="modal-buttons">
+        <button class="btn-primary" onclick="applyModeChange()">変更</button>
+        <button class="btn-secondary" onclick="closeModeModal()">キャンセル</button>
+      </div>
+    </div>
+  </div>
+`;
+
+function loadSidebar() {
+    const container = document.getElementById('sidebar-container');
+    if (container) {
+        container.innerHTML = sidebarHTML;
+        updateModeDisplay(); // 必要な関数を呼び出す
+    }
+}
+
+function showModeChangeModal() {
+    document.getElementById("mode-change-modal").style.display = 'block';
+}
+
+function closeModeModal() {
+    document.getElementById("mode-change-modal").style.display = 'none';
+}
+
+// モード変更を適用する関数
+async function applyModeChange() {
+    const modeRadios = document.querySelectorAll('input[name="mode"]');
+    const password = document.getElementById("mode-password").value;
+    let selectedMode;
+
+    modeRadios.forEach(radio => {
+        if (radio.checked) {
+            selectedMode = radio.value;
+        }
+    });
+
+    try {
+        const result = await GasAPI.verifyModePassword(selectedMode, password);
+
+        if (result.success) {
+            localStorage.setItem('currentMode', selectedMode); // 現在のモードを保存
+            updateModeDisplay(); // 表示を更新
+            alert(`${selectedMode} モードに切り替えました`);
+            closeModeModal(); // モーダルを閉じる
+        } else {
+            alert('パスワードが間違っています。');
+        }
+    } catch (error) {
+        alert(`エラーが発生しました: ${error.message}`);
+    }
+}
+
+// モード表示を更新する関数
+function updateModeDisplay() {
+    const modeDisplay = document.getElementById("current-mode-display");
+    if (modeDisplay) {
+        const currentMode = localStorage.getItem('currentMode') || '通常モード';
+        modeDisplay.textContent = currentMode;
+    }
+}
+
+function toggleSidebar() {
+    const sidebar = document.getElementById("mySidebar");
+    const main = document.getElementById("main-content");
+
+    if (sidebar.style.width === "250px") {
+        sidebar.style.width = "0";
+        main.style.marginLeft = "0";
+    } else {
+        sidebar.style.width = "250px";
+        main.style.marginLeft = "250px";
+    }
+}
+
+// グローバル変数として設定
+window.loadSidebar = loadSidebar;
+window.toggleSidebar = toggleSidebar;
+window.showModeChangeModal = showModeChangeModal; // モーダルを表示する関数もグローバル登録
+window.closeModeModal = closeModeModal; // モーダルを閉じる関数もグローバル登録
+window.applyModeChange = applyModeChange; // モード変更を適用する関数もグローバル登録
+
+export { loadSidebar, toggleSidebar, showModeChangeModal, closeModeModal, applyModeChange };
+
+[timeslot-main.js]
+// timeslot-main.js
+
+// 必要なモジュールをインポートします
+import GasAPI from './api.js';
+import { loadSidebar, toggleSidebar } from './sidebar.js';
+// timeslot-schedules.jsから getAllTimeslotsForGroup を提供すると仮定します。
+// もしファイル名や関数名が違う場合は、ここを修正してください。
+import { getAllTimeslotsForGroup } from './timeslot-schedules.js';
+import * as timeSlotConfig from './timeslot-schedules.js';
+
+// --- 初期化処理 (ページの読み込み時に自動で実行されます) ---
+
+const urlParams = new URLSearchParams(window.location.search);
+const group = urlParams.get('group');
+
+// 組名をページのタイトル部分に表示
+document.getElementById('group-name').textContent = isNaN(parseInt(group)) ? group : group + '組';
+
+// サイドバーを読み込んでページに配置
+loadSidebar();
+
+// 時間帯データを読み込んで表示
+loadTimeslots(group);
+
+// --- グローバル関数の登録 ---
+// HTMLの onclick="..." から呼び出せるように、関数をwindowオブジェクトに登録します。
+window.toggleSidebar = toggleSidebar;
+window.selectTimeslot = selectTimeslot;
+
+// --- 関数定義 ---
+
+/**
+ * ユーザーが時間帯を選択したときに呼び出される関数
+ * @param {number | string} day - 日 (例: 1)
+ * @param {string} timeslot - 時間帯 (例: 'A')
+ */
+function selectTimeslot(day, timeslot) {
+  // URLから管理者モードかどうかを判断
+  const isAdmin = urlParams.get('admin') === 'true';
+  let targetPage = 'seats.html';
+  let additionalParams = '';
+
+  // 管理者モードなら、移動先のURLにもadmin=trueパラメータを付与
+  if (isAdmin) {
+    additionalParams = '&admin=true';
+  }
+
+  const url = `${targetPage}?group=${encodeURIComponent(group)}&day=${day}&timeslot=${timeslot}${additionalParams}`;
+  window.location.href = url;
+}
+
+/**
+ * 指定された組の時間帯データを取得し、ページに表示する関数
+ * @param {string} group - 組名 (例: '1', '見本演劇')
+ */
+async function loadTimeslots(group) {
+  const timeslotContainer = document.getElementById('timeslot-container');
+  timeslotContainer.innerHTML = '<div class="loading">時間帯データを読み込み中...</div>';
+
+  try {
+    //const timeslots = await GasAPI.getAllTimeslotsForGroup(group); // ★削除: GAS APIの呼び出しを削除
+    const timeslots = timeSlotConfig.getAllTimeslotsForGroup(group); // ★追加: timeslot-schedules.jsから直接データを取得
+
+    if (!timeslots || timeslots.length === 0) {
+      timeslotContainer.innerHTML = '<p>時間帯データが見つかりませんでした。</p>';
+      return;
+    }
+
+    timeslotContainer.innerHTML = ''; // Clear loading message
+
+    // 時間割データを「日」ごとにグループ分けする
+    const timeslotsByDay = timeslots.reduce((acc, ts) => {
+      (acc[ts.day] = acc[ts.day] || []).push(ts);
+      return acc;
+    }, {});
+
+    // 表示するHTMLを生成
+    let html = '';
+    for (const day in timeslotsByDay) {
+      html += `
+        <div class="timeslot-section">
+          <h2>${getDayName(day)}</h2>
+          <div class="grid-container">
+      `;
+      
+      for (const ts of timeslotsByDay[day]) {
+        // javascript:void(0) は、リンクをクリックしてもページ遷移しないためのおまじない
+        html += `<a class="grid-item timeslot-item" href="javascript:void(0)" onclick="selectTimeslot('${ts.day}', '${ts.timeslot}')">${ts.displayName}</a>`;
+      }
+      
+      html += `
+          </div>
+        </div>
+      `;
+    }
+    
+    timeslotContainer.innerHTML = html;
+
+  } catch (error) {
+    console.error('時間帯データの読み込みエラー:', error);
+    timeslotContainer.innerHTML = '<p>時間帯データの読み込みに失敗しました。</p>';
+  }
+}
+
+/**
+ * 数字の日付を「N日目」という文字列に変換するヘルパー関数
+ * @param {number | string} day 
+ * @returns {string}
+ */
+function getDayName(day) {
+  return day == 1 ? '1日目' : '2日目';
+}
+
+[timeslot-schedules.js]
+/**
+ * 時間帯設定データ（フロントエンド用）
+ * TimeSlotConfig.gsの内容をJavaScript形式に変換
+ */
+
+const TIMESLOT_SCHEDULES = {
+  // ... (中身は変更なし) ...
+  "1": {
+    "1": { "A": "10:00-10:55", "B": "11:35-12:30", "C": "13:10-14:05" },
+    "2": { "D": "10:00-10:55", "E": "11:35-12:30", "F": "13:10-14:05" }
+  },
+  "2": {
+    "1": { "A": "09:30-10:25", "B": "11:05-12:00", "C": "12:40-13:35" },
+    "2": { "D": "09:30-10:25", "E": "11:05-12:00", "F": "12:40-13:35" }
+  },
+  "3": {
+    "1": { "A": "10:15-11:10", "B": "11:50-12:45", "C": "13:25-14:20" },
+    "2": { "D": "10:15-11:10", "E": "11:50-12:45", "F": "13:25-14:20" }
+  },
+  "4": {
+    "1": { "A": "09:45-10:40", "B": "11:20-12:15", "C": "12:55-13:50" },
+    "2": { "D": "09:45-10:40", "E": "11:20-12:15", "F": "12:55-13:50" }
+  },
+  "5": {
+    "1": { "A": "10:30-11:25", "B": "12:05-13:00", "C": "13:40-14:35" },
+    "2": { "D": "10:30-11:25", "E": "12:05-13:00", "F": "13:40-14:35" }
+  },
+  "6": {
+    "1": { "A": "09:15-10:10", "B": "10:50-11:45", "C": "12:25-13:20" },
+    "2": { "D": "09:15-10:10", "E": "10:50-11:45", "F": "12:25-13:20" }
+  },
+  "7": {
+    "1": { "A": "10:45-11:40", "B": "12:20-13:15", "C": "13:55-14:50" },
+    "2": { "D": "10:45-11:40", "E": "12:20-13:15", "F": "13:55-14:50" }
+  },
+  "8": {
+    "1": { "A": "09:00-09:55", "B": "10:35-11:30", "C": "12:10-13:05" },
+    "2": { "D": "09:00-09:55", "E": "10:35-11:30", "F": "12:10-13:05" }
+  },
+  "見本演劇": {
+    "1": { "A": "14:00-14:20", "B": "15:30-15:50" }
+  }
+};
+
+function getTimeslotTime(group, day, timeslot) {
+  try {
+    return TIMESLOT_SCHEDULES[group.toString()][day.toString()][timeslot];
+  } catch (e) {
+    console.log(`Time not found for ${group}-${day}-${timeslot}`);
+    return timeslot;
+  }
+}
+
+function getTimeslotDisplayName(group, day, timeslot) {
+  const time = getTimeslotTime(group, day, timeslot);
+  return `${timeslot}時間帯 (${time})`;
+}
+
+
+// ★★★ 修正点 ★★★
+// この関数を他のファイルから import できるように、exportキーワードを追加します。
+export function getAllTimeslotsForGroup(group) {
+  const groupSchedule = TIMESLOT_SCHEDULES[group.toString()];
+  if (!groupSchedule) return [];
+
+  const results = [];
+  for (const day in groupSchedule) {
+    const daySchedule = groupSchedule[day];
+    for (const timeslot in daySchedule) {
+      const time = daySchedule[timeslot];
+      results.push({
+        day: day,
+        timeslot: timeslot,
+        time: time,
+        displayName: `${timeslot}時間帯 (${time})`
+      });
+    }
+  }
+  return results;
+}
+
+[walkin-main.js]
+/**
+ * 当日券発行画面のメイン処理
+ */
+
+import GasAPI from './api.js'; // GasAPIをインポート
+import { loadSidebar, toggleSidebar, showModeChangeModal } from './sidebar.js';
+
+// URLパラメータ取得
+const urlParams = new URLSearchParams(window.location.search);
+const GROUP = urlParams.get('group');
+const DAY = urlParams.get('day');
+const TIMESLOT = urlParams.get('timeslot');
+
+// 初期化
+window.onload = () => {
+  // サイドバー読み込み
+  loadSidebar();
+  
+  // 表示情報設定
+  const groupName = isNaN(parseInt(GROUP)) ? GROUP : GROUP + '組';
+  document.getElementById('performance-info').textContent = `${groupName} ${DAY}日目 ${TIMESLOT}`;
+  document.getElementById('reservation-details').innerHTML = `
+    座席が確保されました<br>
+    ${groupName} ${DAY}日目 ${TIMESLOT}
+  `;
+};
+
+function showLoader(visible) {
+  const loader = document.getElementById('loading-modal');
+  if (loader) {
+    loader.style.display = visible ? 'block' : 'none';
+  }
+}
+
+async function issueWalkinTicket() {
+  const walkinBtn = document.getElementById('walkin-btn');
+  const reservationResult = document.getElementById('reservation-result');
+  const reservedSeatEl = document.getElementById('reserved-seat');
+  
+  walkinBtn.disabled = true;
+  walkinBtn.textContent = '空席を検索中...';
+  showLoader(true);
+  
+  reservationResult.classList.remove('show');
+
+  try {
+    const response = await GasAPI.assignWalkInSeat(GROUP, DAY, TIMESLOT);
+    
+    if (response.success) {
+      alert(response.message || '座席が確保されました。');
+      walkinBtn.textContent = `発行完了 (座席: ${response.seatId || '不明'})`;
+      walkinBtn.style.background = '#28a745';
+      
+      if (response.seatId) {
+        reservedSeatEl.textContent = response.seatId;
+        reservationResult.classList.add('show');
+      }
+      
+      setTimeout(() => {
+        walkinBtn.disabled = false;
+        walkinBtn.textContent = '再度、空席を探して当日券を発行する';
+        walkinBtn.style.background = '#007bff'; // 通常の色に戻す
+      }, 3000);
+    } else {
+      alert(response.message || '空席が見つかりませんでした。');
+      walkinBtn.disabled = false;
+      walkinBtn.textContent = '再度、空席を探す';
+    }
+  } catch (error) {
+    alert("エラーが発生しました: " + error.message);
+    walkinBtn.disabled = false;
+    walkinBtn.textContent = '空席を探して当日券を発行する';
+  } finally {
+    showLoader(false);
+  }
+}
+
+// ボタン押下時に実行されるようにイベントリスナーを追加
+document.getElementById('walkin-btn').addEventListener('click', issueWalkinTicket);
+
+[index.html]
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>組選択</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="sidebar.css">
+</head>
+<body>
+  <div id="sidebar-container"></div>
+
+  <div id="main-content">
+    <header class="page-header">
+      <button class="menu-btn" onclick="toggleSidebar()">&#9776;</button>
+      <h1>組選択</h1>
+    </header>
+    <main class="container">
+      <p class="description">管理する組または演劇を選択してください。</p>
+      <div class="grid-container">
+        <a class="grid-item" href="timeslot.html?group=1">1組</a>
+        <a class="grid-item" href="timeslot.html?group=2">2組</a>
+        <a class="grid-item" href="timeslot.html?group=3">3組</a>
+        <a class="grid-item" href="timeslot.html?group=4">4組</a>
+        <a class="grid-item" href="timeslot.html?group=5">5組</a>
+        <a class="grid-item" href="timeslot.html?group=6">6組</a>
+        <a class="grid-item" href="timeslot.html?group=7">7組</a>
+        <a class="grid-item" href="timeslot.html?group=8">8組</a>
+        <a class="grid-item" href="timeslot.html?group=見本演劇">見本演劇</a>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="index-main.js"></script>
+</body>
+</html>
+
+[seats.html]
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>座席選択</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="sidebar.css">
+    <link rel="stylesheet" href="seats.css">
+</head>
+<body>
+    <div id="sidebar-container"></div>
+
+    <div id="main-content">
+        <div class="page-header">
+            <span id="menu-btn" class="menu-btn" onclick="toggleSidebar()">&#9776;</span>
+            <div class="header-title-container">
+                <h1>座席選択</h1>
+                <p><span id="performance-info"></span></p>
+            </div>
+            <div id="admin-indicator" class="admin-mode-indicator" style="display: none;">管理者モード</div>
+        </div>
+
+        <div class="container">
+            <button id="admin-login-btn" class="admin-login-btn" onclick="promptForAdminPassword()">管理者ログイン</button>
+            <main>
+                <div class="screen">舞台</div>
+                <div id="seat-map-container" class="seat-map-container"></div>
+                <div class="legend">
+                    <div class="legend-item"><span class="seat-indicator" style="background: #28a745;"></span>&nbsp;予約可能</div>
+                    <div class="legend-item"><span class="seat-indicator" style="background: #007bff;"></span>&nbsp;選択中</div>
+                    <div class="legend-item"><span class="seat-indicator" style="background: #ffc107;"></span>&nbsp;確保/予約済</div>
+                    <div class="legend-item"><span class="seat-indicator" style="background: #dc3545;"></span>&nbsp;要チェックイン</div>
+                    <div class="legend-item"><span class="seat-indicator" style="background: #6c757d;"></span>&nbsp;チェックイン済</div>
+                    <div class="legend-item"><span class="seat-indicator" style="background: #e9ecef;"></span>&nbsp;設定なし</div>
+                </div>
+                <button id="submit-button" class="submit-button" onclick="confirmReservation()">この席で予約する</button>
+                <button id="check-in-selected-btn" class="submit-button" onclick="checkInSelected()" style="display:none;">選択した座席をチェックイン</button>
+            </main>
+        </div>
+    </div>
+
+    <div id="loading-modal" class="modal" style="display: none;">
+        <div class="modal-content" style="text-align: center;">
+            <div class="spinner"></div>
+            <p>処理中です...</p>
+        </div>
+    </div>
+
+    <script type="module" src="config.js"></script>
+    <script type="module" src="api.js"></script>
+    <script type="module" src="sidebar.js"></script>
+    <script type="module" src="seats-main.js"></script>
+</body>
+</html>
+
+[timeslot.html]
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>時間帯選択</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="sidebar.css">
+</head>
+<body>
+
+  <div id="sidebar-container"></div>
+
+  <div id="main-content">
+    <header class="page-header">
+      <button class="menu-btn" onclick="toggleSidebar()">&#9776;</button>
+      <h1><span id="group-name"></span> 時間帯選択</h1>
+    </header>
+
+    <main class="container">
+      <div id="timeslot-container">
+        <div class="loading">時間帯データを読み込み中...</div>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="config.js"></script>
+  <script type="module" src="timeslot-main.js"></script>
+</body>
+</html>
+
+[walkin.html]
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>当日券発行</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="sidebar.css">
+  <link rel="stylesheet" href="walkin.css">
+</head>
+<body>
+
+  <div id="sidebar-container"></div>
+
+  <div id="main-content">
+    <div class="page-header">
+      <span class="menu-btn" onclick="toggleSidebar()">&#9776;</span >
+      <div class="header-title-container">
+        <h1>当日券 発行</h1>
+      </div>
+    </div>
+    
+    <div class="container">
+      <div class="card walkin-card">
+        <p>公演：<span id="performance-info"></span></p>
+        <p class="description">下のボタンを押すと、現在空いている席の中から1席を自動で確保します。</p>
+        <button id="walkin-btn" class="walkin-button" onclick="issueWalkinTicket()">空席を探して当日券を発行する</button>
+      </div>
+      
+      <div id="reservation-result" class="reservation-result">
+        <div class="reservation-title">当日券発行完了</div>
+        <div id="reserved-seat" class="reserved-seat"></div>
+        <div class="reservation-details" id="reservation-details"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="loading-modal" class="modal" style="display: none;">
+    <div class="modal-content" style="text-align: center;">
+      <div class="spinner"></div>
+      <p>処理中です...</p>
+    </div>
+  </div>
+
+  <script type="module" src="config.js"></script>
+  <script type="module" src="api.js"></script>
+  <script type="module" src="sidebar.js"></script>
+  <script type="module" src="walkin-main.js"></script>
+</body>
+</html>
+
+[seats.css]
+.page-header {
+    justify-content: flex-start;
+}
+
+.header-title-container {
+    text-align: center;
+    flex-grow: 1;
+}
+
+.header-title-container h1,
+.header-title-container p {
+    margin: 0;
+    /* マージンをゼロにする */
+}
+
+.screen {
+    width: 90%;
+    max-width: 600px;
+    margin: 20px auto;
+    padding: 10px;
+    background: #343a40;
+    color: #fff;
+    text-align: center;
+    border-radius: 5px;
+    font-weight: bold;
+}
+
+.seat-map-container {
+    display: flex;
+    flex-direction: column;
+    /* セクションを縦に並べる */
+    align-items: center;
+    gap: 5px;
+    width: 100%;
+    overflow-x: auto;
+    /* 水平スクロールを許可 */
+    padding: 10px 0;
+}
+
+.seat-section {
+    display: flex;
+    flex-direction: column;
+    /* セクション内の行を縦に並べる */
+    gap: 5px;
+}
+
+.seat-row {
+    display: flex;
+    /* 各行は横に並ぶ */
+    justify-content: center;
+    /* 中央揃え */
+    gap: 5px;
+}
+
+.passage {
+    width: 30px;
+    /* 通路の幅 */
+}
+
+.legend {
+    display: flex;
+    flex-wrap: wrap;
+    /* レジェンド要素をラップ */
+    justify-content: center;
+    gap: 10px 20px;
+    margin: 25px 0;
+    font-size: 14px;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.legend-item .seat-indicator {
+    width: 20px;
+    height: 20px;
+    border-radius: 5px;
+}
+
+/* 設定パネル関連 */
+.settings-btn {
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    width: 40px;
+    height: 40px;
+    background: rgba(0, 0, 0, 0.3);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    transition: all 0.3s;
+    z-index: 100;
+}
+
+.settings-btn:hover {
+    background: rgba(0, 0, 0, 0.5);
+    transform: rotate(90deg);
+}
+
+.settings-btn::before {
+    content: "";
+    width: 20px;
+    height: 20px;
+    background: currentColor;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 15.5A3.5 3.5 0 0 1 8.5 12A3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.53c.04-.32.07-.64.07-.97 0-.33-.03-.66-.07-1l2.11-1.63c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.31-.61-.22l-2.49 1c-.52-.39-1.06-.73-1.69-.98l-.37-2.65A.506.506 0 0 0 14 2h-4c-.25 0-.46.18-.5.42l-.37 2.65c-.63.25-1.17.59-1.69.98l-2.49-1c-.22-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64L4.57 11c-.04.34-.07.67-.07 1 0 .33.03.65.07.97l-2.11 1.66c-.19.15-.25.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1.01c.52.4 1.06.74 1.69.99l.37 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.37-2.65c.63-.26 1.17-.59 1.69-.99l2.49 1.01c.22.08.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.66Z'/%3E%3C/svg%3E") center/contain;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 15.5A3.5 3.5 0 0 1 8.5 12A3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.53c.04-.32.07-.64.07-.97 0-.33-.03-.66-.07-1l2.11-1.63c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.31-.61-.22l-2.49 1c-.52-.39-1.06-.73-1.69-.98l-.37-2.65A.506.506 0 0 0 14 2h-4c-.25 0-.46.18-.5.42l-.37 2.65c-.63.25-1.17.59-1.69.98l-2.49-1c-.22-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64L4.57 11c-.04.34-.07.67-.07 1 0 .33.03.65.07.97l-2.11 1.66c-.19.15-.25.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1.01c.52.4 1.06.74 1.69.99l.37 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.37-2.65c.63-.26 1.17-.59 1.69-.99l2.49 1.01c.22.08.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.66Z'/%3E%3C/svg%3E") center/contain;
+}
+
+.settings-panel {
+    position: fixed;
+    bottom: 70px;
+    left: 20px;
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    padding: 15px;
+    min-width: 250px;
+    transform: scale(0);
+    transform-origin: bottom left;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    opacity: 0;
+    z-index: 99;
+}
+
+.settings-panel.show {
+    transform: scale(1);
+    opacity: 1;
+}
+
+.settings-panel h4 {
+    margin: 0 0 15px 0;
+    font-size: 14px;
+    color: #333;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 8px;
+}
+
+.refresh-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.refresh-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    background-color: #28a745;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    width: 100%;
+}
+
+.refresh-btn:disabled {
+    background-color: #6c757d;
+    cursor: not-allowed;
+}
+
+.auto-refresh-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 20px;
+}
+
+.switch input {
+    opacity: 0;
+    /* 非表示にする */
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .4s;
+    border-radius: 20px;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 16px;
+    width: 16px;
+    left: 2px;
+    bottom: 2px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+}
+
+input:checked+.slider {
+    background-color: #007bff;
+    /* チェック時 */
+}
+
+input:checked+.slider:before {
+    transform: translateX(20px);
+    /* スライダーの移動 */
+}
+
+.last-update {
+    font-size: 11px;
+    color: #6c757d;
+    text-align: center;
+    margin-top: 10px;
+}
+
+.overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    z-index: 98;
+    display: none;
+}
+
+.overlay.show {
+    display: block;
+    /* 表示制御 */
+}
+
+.seat {
+    border-radius: 5px;
+    display: flex;
+    /* セル内で内容をフレックスで整列 */
+    flex-direction: column;
+    justify-content: center;
+    /* 中央揃え */
+    align-items: center;
+    font-weight: bold;
+    user-select: none;
+    /* 選択を禁止 */
+    width: 50px;
+    height: 50px;
+    box-sizing: border-box;
+    transition: all 0.2s;
+    /* ホバー時の反応 */
+    position: relative;
+}
+
+.seat-id {
+    font-size: 14px;
+}
+
+.seat-name {
+    font-size: 10px;
+    margin-top: 2px;
+    font-weight: normal;
+    color: #fff;
+    text-shadow: 0 0 3px rgba(0, 0, 0, 0.7);
+    overflow: hidden;
+    /* オーバーフロー制御 */
+    text-overflow: ellipsis;
+    /* テキストオーバーフロー */
+    white-space: nowrap;
+    /* 改行禁止 */
+    max-width: 45px;
+    /* 最大幅 */
+}
+
+/* 座席の状態別のスタイル */
+.seat.available {
+    background: #28a745;
+    /* 空き席 */
+    color: #fff;
+    cursor: pointer;
+    /* ポインタ */
+}
+
+.seat.available:hover {
+    background: #218838;
+    /* ホバー時 */
+    transform: translateY(-2px);
+    /* スペース調整 */
+}
+
+.seat.selected {
+    background: #007bff;
+    /* 選択された座席 */
+    color: #fff;
+    box-shadow: 0 0 12px 2px #007bff;
+    /* ハイライト */
+    transform: translateY(-2px);
+}
+
+.seat.reserved {
+    background: #ffc107;
+    /* 予約済み */
+    color: #212529;
+    /* テキストカラー */
+}
+
+.seat.reserved .seat-name {
+    color: #212529;
+    /* 予約済み状態の名前のカラー */
+    text-shadow: none;
+    /* テキストシャドウを削除 */
+}
+
+.seat.to-be-checked-in {
+    background: #dc3545;
+    /* チェックイン待ち */
+    color: #fff;
+}
+
+.seat.checked-in {
+    background: #6c757d;
+    /* チェックイン済み */
+    color: #fff;
+}
+
+.seat.unavailable {
+    background: #e9ecef;
+    /* 使用不可の座席 */
+    color: #6c757d;
+}
+
+.admin-login-btn {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    padding: 6px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    background-color: #6c757d;
+    /* 背景色 */
+    color: white;
+    border: none;
+    /* ボーダーなし */
+    border-radius: 5px;
+    z-index: 10;
+    /* 上に表示 */
+}
+
+.check-in-btn {
+    position: absolute;
+    bottom: 1px;
+    /* 座席内 */
+    padding: 1px 3px;
+    font-size: 9px;
+    /* 文字サイズ */
+    cursor: pointer;
+    border: 1px solid #fff;
+    /* ボーダー */
+    background: #007bff;
+    /* 背景色 */
+    color: #fff;
+    border-radius: 3px;
+}
+
+.submit-button {
+    width: 100%;
+    /* 幅 */
+    padding: 15px;
+    font-size: 18px;
+    font-weight: bold;
+    color: white;
+    /* 文字色 */
+    background-color: #007bff;
+    /* 背景色 */
+    border: none;
+    border-radius: 5px;
+    /* 角丸 */
+    cursor: pointer;
+    /* ポインタ */
+    margin-top: 20px;
+    /* 上部マージン */
+}
+
+.admin-mode-indicator {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    color: red;
+    /* 管理者モードの色 */
+    font-weight: bold;
+}
+
+.check-in-checkbox {
+    position: absolute;
+    top: 5px;
+    left: 5px;
+    /* Adjust as needed */
+    z-index: 1;
+    /* Ensure it's above other seat content */
+}
+
+[sidebar.css]
+.sidebar {
+  height: 100%;
+  width: 0;
+  position: fixed;
+  z-index: 200;
+  top: 0;
+  left: 0;
+  background-color: #111;
+  overflow-x: hidden;
+  transition: 0.3s;
+  padding-top: 60px;
+}
+
+.sidebar a {
+  padding: 8px 8px 8px 32px;
+  text-decoration: none;
+  font-size: 18px;
+  color: #818181;
+  display: block;
+  transition: 0.3s;
+}
+
+.sidebar a:hover {
+  color: #f1f1f1;
+}
+
+.sidebar .closebtn {
+  position: absolute;
+  top: 0;
+  right: 25px;
+  font-size: 36px;
+  margin-left: 50px;
+}
+
+#main-content {
+  transition: margin-left .3s;
+  min-height: 100vh;
+}
+
+.mode-section {
+  margin-top: 30px;
+  padding: 20px;
+  border-top: 1px solid #333;
+}
+
+.mode-title {
+  color: #818181;
+  font-size: 14px;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.current-mode {
+  color: #f1f1f1;
+  font-size: 16px;
+  margin-bottom: 15px;
+  padding: 10px;
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+}
+
+.change-mode-btn {
+  background-color: #007bff;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  font-size: 14px;
+  border-radius: 5px;
+  cursor: pointer;
+  width: 100%;
+  transition: background-color 0.3s;
+}
+
+.change-mode-btn:hover {
+  background-color: #0056b3;
+}
+
+.mode-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 20px 0;
+}
+
+.mode-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.mode-option:hover {
+  background-color: #f5f5f5;
+}
+
+.mode-option input {
+  margin-right: 10px;
+}
+
+.mode-option span {
+  font-weight: bold;
+  margin-bottom: 5px;
+}
+
+.mode-option small {
+  color: #666;
+  font-size: 12px;
+}
+
+.password-section {
+  margin: 20px 0;
+}
+
+.password-section input {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  font-size: 14px;
+}
+
+.modal-buttons {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+.btn-primary,
+.btn-secondary {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 5px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.btn-primary {
+  background-color: #007bff;
+  color: white;
+}
+
+.btn-primary:hover {
+  background-color: #0056b3;
+}
+
+.btn-secondary {
+  background-color: #6c757d;
+  color: white;
+}
+
+.btn-secondary:hover {
+  background-color: #5a6268;
+}
+
+[styles.css]
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  margin: 0;
+  background-color: #f0f2f5;
+}
+
+.container {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+.page-header {
+  background-color: #fff;
+  padding: 10px 20px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  display: flex;
+  align-items: center;
+}
+
+.page-header h1 {
+  font-size: 20px;
+  margin: 0;
+  margin-left: 15px;
+}
+
+.menu-btn {
+  font-size: 24px;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.description {
+  color: #666;
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.grid-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 15px;
+}
+
+.grid-item {
+  background-color: #fff;
+  border-radius: 8px;
+  padding: 20px;
+  text-align: center;
+  text-decoration: none;
+  color: #333;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.grid-item:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+}
+
+.card {
+  background-color: #fff;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.timeslot-section {
+  margin-bottom: 30px;
+}
+
+.timeslot-section h2 {
+  border-bottom: 2px solid #007bff;
+  padding-bottom: 5px;
+  margin-bottom: 15px;
+}
+
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  background-color: rgba(0,0,0,0.4);
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-content {
+  background-color: #fefefe;
+  margin: 15% auto;
+  padding: 20px;
+  border: 1px solid #888;
+  width: 80%;
+  max-width: 500px;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.spinner {
+  border: 5px solid #f3f3f3;
+  border-top: 5px solid #3498db;
+  border-radius: 50%;
+  width: 50px;
+  height: 50px;
+  animation: spin 1s linear infinite;
+  margin: 20px auto;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.loading {
+  text-align: center;
+  padding: 40px;
+  color: #666;
+}
+
+[walkin.css]
+.page-header {
+  justify-content: flex-start;
+}
+
+.header-title-container {
+  text-align: center;
+  flex-grow: 1;
+}
+
+.header-title-container h1,
+.header-title-container p {
+  margin: 0;
+}
+
+.walkin-card {
+  text-align: center;
+}
+
+.walkin-button {
+  width: 100%;
+  padding: 15px 30px;
+  font-size: 18px;
+  font-weight: bold;
+  color: white;
+  background-color: #28a745;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.walkin-button:hover {
+  background-color: #218838;
+}
+
+.walkin-button:disabled {
+  background-color: #6c757d;
+  cursor: not-allowed;
+}
+
+.reservation-result {
+  margin-top: 30px;
+  padding: 30px;
+  text-align: center;
+  background: #f8f9fa;
+  border-radius: 10px;
+  border: 2px solid #28a745;
+  display: none;
+}
+
+.reservation-result.show {
+  display: block;
+}
+
+.reserved-seat {
+  font-size: 48px;
+  font-weight: bold;
+  color: #28a745;
+  margin: 20px 0;
+  text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+}
+
+.reservation-title {
+  font-size: 24px;
+  color: #333;
+  margin-bottom: 10px;
+}
+
+.reservation-details {
+  font-size: 16px;
+  color: #666;
+  margin-top: 15px;
+}
+
+[Code.gs]
+// ===============================================================
+// === API処理 (POSTリクエスト) ===
+// ===============================================================
+
+function doPost(e) {
+  let response;
+  let callback = e.parameter.callback; // コールバック関数名を取得
+
+  // プリフライトリクエストの場合の処理
+  if (e.method === "OPTIONS") {
+    const headers = {
+      "Access-Control-Allow-Origin": "*", // すべてのオリジンを許可
+      "Access-Control-Allow-Methods": "POST, GET, OPTIONS, DELETE",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Max-Age": "3600"
+    };
+    return ContentService.createTextOutput("")
+      .setMimeType(ContentService.MimeType.TEXT)
+      .setHeaders(headers);
+  }
+
+  try {
+    const body = e.postData.contents;
+
+    // パラメータを解析
+    const params = {};
+    body.split('&').forEach(pair => {
+      const [key, value] = pair.split('=');
+      params[key] = JSON.parse(decodeURIComponent(value.replace(/\+/g, ' ')));
+    });
+
+    const funcName = params.func;
+    const funcParams = params.params || [];
+
+    if (!funcName) {
+      throw new Error("呼び出す関数が指定されていません。(funcが必要です)");
+    }
+
+    const functionMap = {
+      'getSeatData': getSeatData,
+      'reserveSeats': reserveSeats,
+      'checkInSeat': checkInSeat,
+      'assignWalkInSeat': assignWalkInSeat,
+      'verifyModePassword': verifyModePassword,
+      'getAllTimeslotsForGroup': getAllTimeslotsForGroup,
+      'testApi': testApi
+    };
+
+    if (functionMap[funcName]) {
+      response = functionMap[funcName].apply(null, funcParams);
+    } else {
+      throw new Error("無効な関数名です: " + funcName);
+    }
+
+  } catch (err) {
+    response = { error: err.message };
+  }
+
+  // JSONP形式でレスポンスを返す
+  let output = callback + '(' + JSON.stringify(response) + ')';
+  return ContentService.createTextOutput(output)
+    .setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
+
+// ===============================================================
+// === ページ表示処理 (GETリクエスト) ===
+// ===============================================================
+
+/**
+ * WebアプリケーションにGETリクエストが来たときに実行されるメイン関数。
+ */
+function doGet(e) {
+  const response = {
+    status: 'OK',
+    message: 'Seat Management API is running',
+    version: '1.0'
+  };
+
+  let callback = e.parameter.callback; // コールバック関数名を取得
+
+  let output = callback + '(' + JSON.stringify(response) + ')';
+  return ContentService.createTextOutput(output)
+    .setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
+
+// ===============================================================
+// === APIとして呼び出される各種関数 ===
+// ===============================================================
+
+/**
+ * 指定された公演の座席データを全て取得する。
+ */
+function getSeatData(group, day, timeslot, isAdmin = false) {
+  try {
+    const sheet = getSheet(group, day, timeslot, 'SEAT');
+    if (!sheet) throw new Error("対象の座席シートが見つかりません。");
+
+    const dataRange = sheet.getRange("A2:E" + sheet.getLastRow());
+    const data = dataRange.getValues();
+    const seatMap = {};
+
+    data.forEach(row => {
+      const rowLabel = row[0];
+      const colLabel = row[1];
+      if (!rowLabel || !colLabel) return;
+
+      const seatId = String(rowLabel) + String(colLabel);
+      if (!isValidSeatId(seatId)) return;
+
+      const statusC = row[2];
+      const nameD = row[3];
+      const checkinE = row[4];
+
+      const seat = { id: seatId, status: 'available', name: null };
+
+      if (statusC === '予約済') {
+        seat.status = (checkinE === '済') ? 'checked-in' : 'to-be-checked-in';
+      } else if (statusC === '確保') {
+        seat.status = 'reserved';
+      }
+
+      if (isAdmin) {
+        seat.name = nameD || null;
+      }
+      seatMap[seatId] = seat;
+    });
+
+    Logger.log(`座席データを正常に取得: [${group}-${day}-${timeslot}], 座席数: ${Object.keys(seatMap).length}`);
+    return { success: true, seatMap: seatMap };
+
+  } catch (e) {
+    Logger.log(`getSeatData Error for ${group}-${day}-${timeslot}: ${e.message}\n${e.stack}`);
+    return { success: false, error: `座席データの取得に失敗しました: ${e.message}` };
+  }
+}
+
+/**
+ * ユーザーが選択した複数の座席を予約する。
+ */
+function reserveSeats(group, day, timeslot, selectedSeats) {
+  if (!Array.isArray(selectedSeats) || selectedSeats.length === 0) {
+    return { success: false, message: '予約する座席が選択されていません。' };
+  }
+
+  const invalidSeats = selectedSeats.filter(seatId => !isValidSeatId(seatId));
+  if (invalidSeats.length > 0) {
+    return { success: false, message: `無効な座席IDが含まれています: ${invalidSeats.join(', ')}` };
+  }
+
+  const lock = LockService.getScriptLock();
+  if (lock.tryLock(15000)) {
+    try {
+      const sheet = getSheet(group, day, timeslot, 'SEAT');
+      if (!sheet) throw new Error("対象の公演シートが見つかりませんでした。");
+
+      const dataRange = sheet.getRange("A2:E" + sheet.getLastRow());
+      const data = dataRange.getValues();
+      let reservationSuccess = false;
+
+      for (let i = 0; i < data.length; i++) {
+        const seatId = String(data[i][0]) + String(data[i][1]);
+        if (!isValidSeatId(seatId)) continue;
+
+        if (selectedSeats.includes(seatId)) {
+          if (data[i][2] !== '空') {
+            throw new Error(`座席 ${seatId} は既に他のお客様によって予約されています。ページを更新して再度お試しください。`);
+          }
+          sheet.getRange(i + 2, 3, 1, 3).setValues([['予約済', '', '']]);
+          reservationSuccess = true;
+        }
+      }
+
+      if (!reservationSuccess) {
+        throw new Error("予約対象の座席が見つかりませんでした。");
+      }
+
+      SpreadsheetApp.flush();
+      return { success: true, message: `予約が完了しました。\n座席: ${selectedSeats.join(', ')}` };
+
+    } catch (e) {
+      Logger.log(`reserveSeats Error for ${group}-${day}-${timeslot}: ${e.message}\n${e.stack}`);
+      return { success: false, message: `予約エラー: ${e.message}` };
+    } finally {
+      lock.releaseLock();
+    }
+  } else {
+    return { success: false, message: "処理が大変混み合っています。しばらく時間をおいてから再度お試しください。" };
+  }
+}
+
+/**
+ * 座席をチェックインする。
+ */
+function checkInSeat(group, day, timeslot, seatId) {
+  if (!seatId || !isValidSeatId(seatId)) {
+    return { success: false, message: `無効な座席IDです: ${seatId}` };
+  }
+
+  const lock = LockService.getScriptLock();
+  if (lock.tryLock(10000)) {
+    try {
+      const sheet = getSheet(group, day, timeslot, 'SEAT');
+      if (!sheet) throw new Error("対象の座席シートが見つかりません。");
+      
+      const data = sheet.getRange("A2:E" + sheet.getLastRow()).getValues();
+      let found = false;
+
+      for (let i = 0; i < data.length; i++) {
+        const currentSeatId = String(data[i][0]) + String(data[i][1]);
+        if (currentSeatId === seatId) {
+          found = true;
+          const status = data[i][2];
+          const name = data[i][3] || '';
+
+          if (status === "予約済") {
+            sheet.getRange(i + 2, 5).setValue("済");
+            SpreadsheetApp.flush();
+            return { success: true, message: `${seatId} をチェックインしました。`, checkedInName: name };
+          } else {
+            throw new Error(`${seatId} はチェックインできない状態です。（現在の状態: ${status}）`);
+          }
+        }
+      }
+
+      if (!found) {
+        throw new Error(`${seatId} がシートに見つかりませんでした。`);
+      }
+    } catch (e) {
+      Logger.log(`checkInSeat Error for ${group}-${day}-${timeslot}: ${e.message}\n${e.stack}`);
+      return { success: false, message: e.message };
+    } finally {
+      lock.releaseLock();
+    }
+  } else {
+    return { success: false, message: "処理が混み合っています。再度お試しください。" };
+  }
+}
+
+/**
+ * 当日券発行：空いている席を1つ自動で探し、確保する。
+ */
+function assignWalkInSeat(group, day, timeslot) {
+  const lock = LockService.getScriptLock();
+  if (lock.tryLock(15000)) {
+    try {
+      const sheet = getSheet(group, day, timeslot, 'SEAT');
+      if (!sheet) throw new Error("対象の公演シートが見つかりませんでした。");
+
+      const data = sheet.getRange("A2:C" + sheet.getLastRow()).getValues();
+      let assignedSeat = null;
+
+      // 有効な空席を探す
+      for (let i = 0; i < data.length; i++) {
+        const seatId = String(data[i][0]) + String(data[i][1]);
+        if (!isValidSeatId(seatId)) {
+           continue;
+        }
+        if (data[i][2] === '空') {
+          const timestamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy/MM/dd HH:mm:ss");
+          sheet.getRange(i + 2, 3, 1, 3).setValues([['予約済', `当日券_${timestamp}`, '']]);
+          assignedSeat = seatId;
+          break;
+        }
+      }
+
+      if (assignedSeat) {
+        SpreadsheetApp.flush();
+        return { success: true, message: `当日券を発行しました！\n\nあなたの座席は 【${assignedSeat}】 です。`, seatId: assignedSeat };
+      } else {
+        return { success: false, message: '申し訳ありません、この回の座席は現在満席です。' };
+      }
+    } catch (e) {
+      Logger.log(`assignWalkInSeat Error: ${e.message}\n${e.stack}`);
+      return { success: false, message: `エラーが発生しました: ${e.message}` };
+    } finally {
+      lock.releaseLock();
+    }
+  } else {
+    return { success: false, message: "処理が混み合っています。しばらくしてから再度お試しください。" };
+  }
+}
+
+/**
+ * モード別のパスワードを検証する。
+ */
+function verifyModePassword(mode, password) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const adminPassword = props.getProperty('ADMIN_PASSWORD');
+    const walkinPassword = props.getProperty('WALKIN_PASSWORD');
+
+    if (mode === 'admin') return { success: adminPassword && password === adminPassword };
+    if (mode === 'walkin') return { success: walkinPassword && password === walkinPassword };
+    return { success: false };
+
+  } catch (e) {
+    Logger.log("verifyModePassword Error: " + e.message);
+    return { success: false };
+  }
+}
+
+// ===============================================================
+// === 内部ヘルパー関数 ===
+// ===============================================================
+
+/**
+ * 座席IDの形式が有効かどうかを検証する。
+ */
+function isValidSeatId(seatId) {
+  if (!seatId || typeof seatId !== 'string') return false;
+  const match = seatId.match(/^([A-E])(\d+)$/);
+  if (!match) return false;
+
+  const row = match[1];
+  const col = parseInt(match[2], 10);
+
+  const maxSeats = { 'A': 12, 'B': 12, 'C': 12, 'D': 12, 'E': 6 };
+  return col >= 1 && col <= (maxSeats[row] || 0);
+}
+
+/**
+ * スプレッドシートIDとシート名からシートオブジェクトを取得する。
+ */
+function getSheet(group, day, timeslot, type) {
+  try {
+    const ssId = getSeatSheetId(group, day, timeslot);
+    if (!ssId) {
+      throw new Error(`Spreadsheet ID not found for ${group}-${day}-${timeslot}`);
+    }
+
+    const sheetName = (type === 'SEAT') ? TARGET_SEAT_SHEET_NAME : LOG_SHEET_NAME;
+    const ss = SpreadsheetApp.openById(ssId);
+    const sheet = ss.getSheetByName(sheetName);
+
+    if (!sheet) {
+      throw new Error(`Sheet "${sheetName}" not found in spreadsheet ID: ${ssId}`);
+    }
+    return sheet;
+
+  } catch (e) {
+    Logger.log(`getSheet Error for ${group}-${day}-${timeslot}: ${e.message}`);
+    throw e;
+  }
+}
+
+/**
+ * TimeSlotConfig.gsの関数を呼び出すための窓口
+ */
+function getAllTimeslotsForGroup(group) {
+  return _getAllTimeslotsForGroup(group);
+}
+
+/**
+ * シンプルなテスト用API関数
+ */
+function testApi() {
+  return { success: true, data: "Test API is working!" };
+}
+
+/**
+ * クライアント側からエラー情報を送信するためのAPI
+ */
+function reportError(errorMessage) {
+  Logger.log(`Client-side error: ${errorMessage}`);
+  return { success: true };
+}
+
+[TimeSlotConfig.gs]
+// ==== 時間帯設定管理ファイル ====
+// 各組・日・時間帯ごとに実際の時間を定義
+
+const TIMESLOT_SCHEDULES = {
+  // 1組
+  "1": {
+    "1": { // 1日目
+      "A": "10:00-10:55", "B": "11:35-12:30", "C": "13:10-14:05"
+    },
+    "2": { // 2日目
+      "D": "10:00-10:55", "E": "11:35-12:30", "F": "13:10-14:05"
+    }
+  },
+  // 2組
+  "2": {
+    "1": { "A": "09:30-10:25", "B": "11:05-12:00", "C": "12:40-13:35" },
+    "2": { "D": "09:30-10:25", "E": "11:05-12:00", "F": "12:40-13:35" }
+  },
+  // 3組
+  "3": {
+    "1": { "A": "10:15-11:10", "B": "11:50-12:45", "C": "13:25-14:20" },
+    "2": { "D": "10:15-11:10", "E": "11:50-12:45", "F": "13:25-14:20" }
+  },
+  // 4組
+  "4": {
+    "1": { "A": "09:45-10:40", "B": "11:20-12:15", "C": "12:55-13:50" },
+    "2": { "D": "09:45-10:40", "E": "11:20-12:15", "F": "12:55-13:50" }
+  },
+  // 5組
+  "5": {
+    "1": { "A": "10:30-11:25", "B": "12:05-13:00", "C": "13:40-14:35" },
+    "2": { "D": "10:30-11:25", "E": "12:05-13:00", "F": "13:40-14:35" }
+  },
+  // 6組
+  "6": {
+    "1": { "A": "09:15-10:10", "B": "10:50-11:45", "C": "12:25-13:20" },
+    "2": { "D": "09:15-10:10", "E": "10:50-11:45", "F": "12:25-13:20" }
+  },
+  // 7組
+  "7": {
+    "1": { "A": "10:45-11:40", "B": "12:20-13:15", "C": "13:55-14:50" },
+    "2": { "D": "10:45-11:40", "E": "12:20-13:15", "F": "13:55-14:50" }
+  },
+  // 8組
+  "8": {
+    "1": { "A": "09:00-09:55", "B": "10:35-11:30", "C": "12:10-13:05" },
+    "2": { "D": "09:00-09:55", "E": "10:35-11:30", "F": "12:10-13:05" }
+  },
+  // 見本演劇
+  "見本演劇": {
+    "1": { "A": "14:00-14:20", "B": "15:30-15:50" }
+    // 見本演劇には2日目がないと仮定
+  }
+};
+
+// 時間帯の実際の時間を取得
+function getTimeslotTime(group, day, timeslot) {
+  try {
+    return TIMESLOT_SCHEDULES[group.toString()][day.toString()][timeslot];
+  } catch (e) {
+    console.log(`Time not found for ${group}-${day}-${timeslot}`);
+    return timeslot; // フォールバック
+  }
+}
+
+// 時間帯の表示名を取得（時間帯 + 実際の時間）
+function getTimeslotDisplayName(group, day, timeslot) {
+  const time = getTimeslotTime(group, day, timeslot);
+  return `${timeslot}時間帯 (${time})`;
+}
+
+// 指定組の全時間帯を取得
+function _getAllTimeslotsForGroup(group) {
+  const groupSchedule = TIMESLOT_SCHEDULES[group.toString()];
+  if (!groupSchedule) return [];
+
+  const results = [];
+  for (const day in groupSchedule) {
+    const daySchedule = groupSchedule[day];
+    for (const timeslot in daySchedule) {
+      const time = daySchedule[timeslot];
+      results.push({
+        day: day,
+        timeslot: timeslot,
+        time: time,
+        displayName: `${timeslot}時間帯 (${time})`
+      });
+    }
+  }
+  return results;
+}
+
+// 日付名を取得
+function getDayName(day) {
+  return day == 1 ? '1日目' : '2日目';
+}
+
+[SpreadsheetIds.gs]
+// ==== スプレッドシートID管理ファイル ====
+// [修正済] キーの形式を 'group-day-timeslot' に変更
+// [追加] 操作対象のシート名を定数として定義
+
+// 操作対象のシート名（固定）
+const TARGET_SEAT_SHEET_NAME = "Seats";  // リネーム: 値は"Seats"に統一
+const LOG_SHEET_NAME = "ParentApplications";
+
+// 座席管理用スプレッドシートID
+const SEAT_SHEET_IDS = {
+  // 1組
+  "1-1-A": "YOUR_SHEET_ID_HERE", "1-1-B": "YOUR_SHEET_ID_HERE", "1-1-C": "YOUR_SHEET_ID_HERE",
+  "1-2-D": "YOUR_SHEET_ID_HERE", "1-2-E": "YOUR_SHEET_ID_HERE", "1-2-F": "YOUR_SHEET_ID_HERE",
+  // 2組
+  "2-1-A": "YOUR_SHEET_ID_HERE", "2-1-B": "YOUR_SHEET_ID_HERE", "2-1-C": "YOUR_SHEET_ID_HERE",
+  "2-2-D": "YOUR_SHEET_ID_HERE", "2-2-E": "YOUR_SHEET_ID_HERE", "2-2-F": "YOUR_SHEET_ID_HERE",
+  // 3組
+  "3-1-A": "YOUR_SHEET_ID_HERE", "3-1-B": "YOUR_SHEET_ID_HERE", "3-1-C": "YOUR_SHEET_ID_HERE",
+  "3-2-D": "YOUR_SHEET_ID_HERE", "3-2-E": "YOUR_SHEET_ID_HERE", "3-2-F": "YOUR_SHEET_ID_HERE",
+  // 4組
+  "4-1-A": "YOUR_SHEET_ID_HERE", "4-1-B": "YOUR_SHEET_ID_HERE", "4-1-C": "YOUR_SHEET_ID_HERE",
+  "4-2-D": "YOUR_SHEET_ID_HERE", "4-2-E": "YOUR_SHEET_ID_HERE", "4-2-F": "YOUR_SHEET_ID_HERE",
+  // 5組
+  "5-1-A": "YOUR_SHEET_ID_HERE", "5-1-B": "YOUR_SHEET_ID_HERE", "5-1-C": "YOUR_SHEET_ID_HERE",
+  "5-2-D": "YOUR_SHEET_ID_HERE", "5-2-E": "YOUR_SHEET_ID_HERE", "5-2-F": "YOUR_SHEET_ID_HERE",
+  // 6組
+  "6-1-A": "YOUR_SHEET_ID_HERE", "6-1-B": "YOUR_SHEET_ID_HERE", "6-1-C": "YOUR_SHEET_ID_HERE",
+  "6-2-D": "YOUR_SHEET_ID_HERE", "6-2-E": "YOUR_SHEET_ID_HERE", "6-2-F": "YOUR_SHEET_ID_HERE",
+  // 7組
+  "7-1-A": "YOUR_SHEET_ID_HERE", "7-1-B": "YOUR_SHEET_ID_HERE", "7-1-C": "YOUR_SHEET_ID_HERE",
+  "7-2-D": "YOUR_SHEET_ID_HERE", "7-2-E": "YOUR_SHEET_ID_HERE", "7-2-F": "YOUR_SHEET_ID_HERE",
+  // 8組
+  "8-1-A": "YOUR_SHEET_ID_HERE", "8-1-B": "YOUR_SHEET_ID_HERE", "8-1-C": "YOUR_SHEET_ID_HERE",
+  "8-2-D": "YOUR_SHEET_ID_HERE", "8-2-E": "YOUR_SHEET_ID_HERE", "8-2-F": "YOUR_SHEET_ID_HERE",
+  // 見本演劇
+  "見本演劇-1-A": "1-lBQMuwjs0YnOpSt3nI8jQmHyNOqUNHiP3i2xXMcbmA",
+  "見本演劇-1-B": "164pnCFDZKmrHlwU0J857NzxRHBeFgdKLzxCwM7DKZmo"
+};
+
+// ログ用スプレッドシートID (キーを座席シートと合わせる)
+const LOG_SHEET_IDS = {
+  "1-1-A": "YOUR_LOG_ID_HERE", "1-1-B": "YOUR_LOG_ID_HERE", // ... 各公演に対応するID
+};
+
+// スプレッドシートIDを取得する関数
+function getSeatSheetId(group, day, timeslot) {
+  const key = `${group}-${day}-${timeslot}`;
+  const id = SEAT_SHEET_IDS[key];
+  
+  if (!id || id === "YOUR_SHEET_ID_HERE") {
+    throw new Error(`座席シートIDが設定されていません: [組: ${group}, 日: ${day}, 時間帯: ${timeslot}]`);
+  }
+  return id;
+}
+
+function getLogSheetId(group, day, timeslot) {
+  const key = `${group}-${day}-${timeslot}`;
+  const id = LOG_SHEET_IDS[key];
+  
+  if (!id || id === "YOUR_LOG_ID_HERE") {
+    console.log(`ログシートIDが設定されていません: [組: ${group}, 日: ${day}, 時間帯: ${timeslot}]`);
+    return null;
+  }
+  return id;
+}
+
+[system-setting.gs]
+/**
+ * スクリプトプロパティにパスワードを設定する関数
+ * 一度実行すれば設定完了
+ */
+function setupPasswords() {
+  const properties = PropertiesService.getScriptProperties();
+  
+  // 管理者パスワード（既存のものがあれば維持、なければ設定）
+  if (!properties.getProperty('ADMIN_PASSWORD')) {
+    properties.setProperty('ADMIN_PASSWORD', 'admin');
+    console.log('管理者パスワードを設定しました: admin');
+  } else {
+    console.log('管理者パスワードは既に設定済みです');
+  }
+  
+  // 当日券モードパスワード
+  properties.setProperty('WALKIN_PASSWORD', 'walkin');
+  console.log('当日券モードパスワードを設定しました: walkin');
+}
+
+/**
+ * 設定されているパスワードを確認する関数（デバッグ用）
+ */
+function checkPasswords() {
+  const properties = PropertiesService.getScriptProperties();
+  console.log('管理者パスワード:', properties.getProperty('ADMIN_PASSWORD'));
+  console.log('当日券パスワード:', properties.getProperty('WALKIN_PASSWORD'));
+}
