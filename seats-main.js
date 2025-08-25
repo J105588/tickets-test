@@ -20,6 +20,9 @@ let isRefreshing = false;
 let settingsOpen = false;
 let isUserInteracting = false; // ユーザーが操作中かどうか
 let interactionTimeout = null; // 操作終了を検知するためのタイマー
+let isSubmittingReservation = false;
+let isSubmittingCheckin = false;
+let lastSeatDataVersion = null;
 
 // APIエンドポイントを設定
 const apiEndpoint = GAS_API_URL;
@@ -63,6 +66,15 @@ window.onload = async () => {
     // 現在のモードを取得して管理者権限を判定
     const currentMode = localStorage.getItem('currentMode') || 'normal';
     const isAdminMode = currentMode === 'admin' || IS_ADMIN;
+
+    // まず軽量バージョンチェック
+    const verResp = await GasAPI.getSeatDataVersion(GROUP, DAY, TIMESLOT);
+    if (verResp && verResp.success && verResp.version === lastSeatDataVersion) {
+      // 変更なしなら描画・取得をスキップ
+      updateLastUpdateTime();
+      startAutoRefresh();
+      return;
+    }
     
     console.log('GasAPI.getSeatData呼び出し:', { GROUP, DAY, TIMESLOT, isAdminMode });
     const seatData = await GasAPI.getSeatData(GROUP, DAY, TIMESLOT, isAdminMode);
@@ -89,6 +101,7 @@ window.onload = async () => {
 
     drawSeatMap(seatData.seatMap);
     updateLastUpdateTime();
+    lastSeatDataVersion = seatData.version || verResp && verResp.version || lastSeatDataVersion;
     updateSelectedSeatsDisplay(); // 初期化時に選択された座席数を更新
     
     // 自動更新設定の初期化
@@ -200,15 +213,19 @@ function startAutoRefresh() {
       
       isRefreshing = true;
       try {
-        // 現在のモードを取得して管理者権限を判定
-        const currentMode = localStorage.getItem('currentMode') || 'normal';
-        const isAdminMode = currentMode === 'admin' || IS_ADMIN;
-        
-        const seatData = await GasAPI.getSeatData(GROUP, DAY, TIMESLOT, isAdminMode);
-        
-        if (seatData.success) {
-          drawSeatMap(seatData.seatMap);
-          updateLastUpdateTime();
+        // 変更がなければスキップ
+        const v = await GasAPI.getSeatDataVersion(GROUP, DAY, TIMESLOT);
+        if (v && v.success && v.version === lastSeatDataVersion) {
+          // 変更なし
+        } else {
+          const currentMode = localStorage.getItem('currentMode') || 'normal';
+          const isAdminMode = currentMode === 'admin' || IS_ADMIN;
+          const seatData = await GasAPI.getSeatData(GROUP, DAY, TIMESLOT, isAdminMode);
+          if (seatData.success) {
+            drawSeatMap(seatData.seatMap);
+            updateLastUpdateTime();
+            lastSeatDataVersion = seatData.version || (v && v.version) || lastSeatDataVersion;
+          }
         }
       } catch (error) {
         console.error('自動更新エラー:', error);
@@ -473,56 +490,40 @@ function promptForAdminPassword() {
 
 // 複数同時チェックイン機能
 async function checkInSelected() {
+  if (isSubmittingCheckin) return;
   const selectedSeatElements = document.querySelectorAll('.seat.selected-for-checkin');
   if (selectedSeatElements.length === 0) {
     alert('チェックインする座席を選択してください。');
     return;
   }
-
-  const selectedSeats = Array.from(selectedSeatElements).map(seatEl => ({
-    id: seatEl.dataset.id,
-    name: seatEl.dataset.seatName
-  }));
-
-  // 選択された座席の一覧を表示
+  isSubmittingCheckin = true;
+  const selectedSeats = Array.from(selectedSeatElements).map(seatEl => ({ id: seatEl.dataset.id, name: seatEl.dataset.seatName }));
   const seatList = selectedSeats.map(seat => `${seat.id}：${seat.name}`).join('\n');
   const confirmMessage = `以下の座席をチェックインしますか？\n\n${seatList}`;
-  
-  if (!confirm(confirmMessage)) {
-    return;
-  }
-
+  if (!confirm(confirmMessage)) { isSubmittingCheckin = false; return; }
   showLoader(true);
-  
   try {
     const seatIds = selectedSeats.map(seat => seat.id);
     const response = await GasAPI.checkInMultipleSeats(GROUP, DAY, TIMESLOT, seatIds);
-    
     if (response.success) {
       alert(`チェックインが完了しました！\n\n${response.message}`);
-      // 座席データを再読み込み
       const currentMode = localStorage.getItem('currentMode') || 'normal';
       const isAdminMode = currentMode === 'admin' || IS_ADMIN;
       const seatData = await GasAPI.getSeatData(GROUP, DAY, TIMESLOT, isAdminMode);
-      
       if (seatData.success) {
         drawSeatMap(seatData.seatMap);
         updateLastUpdateTime();
-        // 選択をクリア
-        selectedSeats.length = 0;
-        updateSelectedSeatsDisplay();
-        // ユーザー操作終了
         endUserInteraction();
       }
     } else {
       alert(`チェックインエラー：\n${response.message}`);
-      // エラーが発生した場合も操作状態を終了
       endUserInteraction();
     }
   } catch (error) {
     console.error('チェックインエラー:', error);
     alert(`チェックインエラー：\n${error.message}`);
   } finally {
+    isSubmittingCheckin = false;
     showLoader(false);
   }
 }
@@ -533,39 +534,34 @@ async function confirmReservation() {
     alert('予約する座席を選択してください。');
     return;
   }
-
+  if (isSubmittingReservation) return;
+  isSubmittingReservation = true;
   const confirmMessage = `以下の座席で予約しますか？\n\n${selectedSeats.join(', ')}`;
-  if (!confirm(confirmMessage)) {
-    return;
-  }
-
+  if (!confirm(confirmMessage)) { isSubmittingReservation = false; return; }
   showLoader(true);
-  
   try {
     const response = await GasAPI.reserveSeats(GROUP, DAY, TIMESLOT, selectedSeats);
-    
     if (response.success) {
       alert(response.message || '予約が完了しました！');
-      // 座席データを再読み込み
       const currentMode = localStorage.getItem('currentMode') || 'normal';
       const isAdminMode = currentMode === 'admin' || IS_ADMIN;
       const seatData = await GasAPI.getSeatData(GROUP, DAY, TIMESLOT, isAdminMode);
-      
       if (seatData.success) {
         drawSeatMap(seatData.seatMap);
         updateLastUpdateTime();
-        selectedSeats = []; // 選択をクリア
+        selectedSeats = [];
         updateSelectedSeatsDisplay();
-        // ユーザー操作終了
         endUserInteraction();
       }
     } else {
       alert(`予約エラー：\n${response.message}`);
+      endUserInteraction();
     }
   } catch (error) {
     console.error('予約エラー:', error);
     alert(`予約エラー：\n${error.message}`);
   } finally {
+    isSubmittingReservation = false;
     showLoader(false);
   }
 }

@@ -10,50 +10,46 @@ class GasAPI {
         const callbackName = 'jsonpCallback_' + functionName + '_' + Date.now();
         const encodedParams = encodeURIComponent(JSON.stringify(params));
         const encodedFuncName = encodeURIComponent(functionName);
-        
-        window[callbackName] = (data) => {
-          debugLog(`API Response (JSONP): ${functionName}`, data);
-          try {
-            delete window[callbackName]; // コールバック関数を削除
-            if (script && script.parentNode) {
-              script.parentNode.removeChild(script); // スクリプトタグを削除
-            }
-            
-            // success: falseの場合も正常なレスポンスとして扱う
-            if (data && typeof data === 'object') {
-              resolve(data);
-            } else {
-              reject(new Error('無効なAPIレスポンスです'));
-            }
-          } catch (e) {
-            console.error('API response cleanup failed:', e);
-            reject(new Error('API応答の処理中にエラーが発生しました: ' + e.message));
-          }
-        };
 
-        // POSTリクエストをシミュレートするためのURL構築
-        const url = `${GAS_API_URL}?callback=${callbackName}`;
-        
-        const script = document.createElement('script');
-        // POSTデータを構築してURLに追加
-        const formData = `func=${encodedFuncName}&params=${encodedParams}`;
-        script.src = `${url}&${formData}`;
-        
-        script.onerror = (error) => {
-          console.error('API call error:', error);
+        let timeoutId;
+        const cleanup = () => {
           try {
-            delete window[callbackName];
+            if (timeoutId) clearTimeout(timeoutId);
+            if (window[callbackName]) {
+              delete window[callbackName];
+            }
             if (script && script.parentNode) {
               script.parentNode.removeChild(script);
             }
-            this._reportError(`JSONPリクエストに失敗しました: ${error.message}`);
-            reject(new Error(`JSONPリクエストに失敗しました: ${error.message}`));
-          } catch (e) {
-            console.error('API error cleanup failed:', e);
-            reject(new Error('APIエラー処理中に例外が発生しました: ' + e.message));
-          }
+          } catch (_) {}
         };
         
+        // 先にコールバックを登録
+        window[callbackName] = (data) => {
+          debugLog(`API Response (JSONP): ${functionName}`, data);
+          cleanup();
+          if (data && typeof data === 'object') {
+            resolve(data);
+          } else {
+            reject(new Error('無効なAPIレスポンスです'));
+          }
+        };
+
+        // タイムアウト安全策
+        timeoutId = setTimeout(() => {
+          cleanup();
+          reject(new Error('APIタイムアウト'));
+        }, 15000);
+
+        const url = `${GAS_API_URL}?callback=${callbackName}`;
+        const script = document.createElement('script');
+        const formData = `func=${encodedFuncName}&params=${encodedParams}`;
+        script.src = `${url}&${formData}`;
+        script.onerror = (error) => {
+          cleanup();
+          this._reportError(`JSONPリクエストに失敗しました: ${error.message || 'network'}`);
+          reject(new Error(`JSONPリクエストに失敗しました: ${error.message || 'network'}`));
+        };
         document.body.appendChild(script);
       } catch (err) {
         console.error('API call exception:', err);
@@ -126,6 +122,11 @@ class GasAPI {
 
   static async getSeatData(group, day, timeslot, isAdmin) {
     const response = await this._callApi('getSeatData', [group, day, timeslot, isAdmin]);
+    return response;
+  }
+
+  static async getSeatDataVersion(group, day, timeslot) {
+    const response = await this._callApi('getSeatDataVersion', [group, day, timeslot]);
     return response;
   }
 
