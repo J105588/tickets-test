@@ -125,11 +125,6 @@ class GasAPI {
     return response;
   }
 
-  static async getSeatDataVersion(group, day, timeslot) {
-    const response = await this._callApi('getSeatDataVersion', [group, day, timeslot]);
-    return response;
-  }
-
   static async assignWalkInSeat(group, day, timeslot) {
     const response = await this._callApi('assignWalkInSeat', [group, day, timeslot]);
     return response;

@@ -38,7 +38,6 @@ function doPost(e) {
 
     const functionMap = {
       'getSeatData': getSeatData,
-      'getSeatDataVersion': getSeatDataVersion,
       'reserveSeats': reserveSeats,
       'checkInSeat': checkInSeat,
       'checkInMultipleSeats': checkInMultipleSeats,
@@ -96,7 +95,6 @@ function doGet(e) {
       
       const functionMap = {
         'getSeatData': getSeatData,
-        'getSeatDataVersion': getSeatDataVersion,
         'reserveSeats': reserveSeats,
         'checkInSeat': checkInSeat,
         'checkInMultipleSeats': checkInMultipleSeats,
@@ -138,9 +136,7 @@ function getSeatData(group, day, timeslot, isAdmin = false) {
     
     const lastRow = sheet.getLastRow();
     if (lastRow <= 1) {
-      const ssId = getSeatSheetId(group, day, timeslot);
-      const ver = _buildVersion(ssId, sheet);
-      return { success: true, seatMap: {}, version: ver };
+      return { success: true, seatMap: {} };
     }
     
     const dataRange = sheet.getRange("A2:E" + lastRow);
@@ -173,42 +169,12 @@ function getSeatData(group, day, timeslot, isAdmin = false) {
       seatMap[seatId] = seat;
     });
 
-    const ssId = getSeatSheetId(group, day, timeslot);
-    const ver = _buildVersion(ssId, sheet);
-
     Logger.log(`座席データ取得: [${group}-${day}-${timeslot}], 座席数: ${Object.keys(seatMap).length}`);
-    return { success: true, seatMap: seatMap, version: ver };
+    return { success: true, seatMap: seatMap };
 
   } catch (e) {
     Logger.log(`getSeatData Error for ${group}-${day}-${timeslot}: ${e.message}\n${e.stack}`);
     return { success: false, error: `座席データの取得に失敗しました: ${e.message}` };
-  }
-}
-
-/**
- * 軽量メタ情報のみ返す: バージョン文字列
- */
-function getSeatDataVersion(group, day, timeslot) {
-  try {
-    const sheet = getSheet(group, day, timeslot, 'SEAT');
-    const ssId = getSeatSheetId(group, day, timeslot);
-    const ver = _buildVersion(ssId, sheet);
-    return { success: true, version: ver };
-  } catch (e) {
-    Logger.log(`getSeatDataVersion Error for ${group}-${day}-${timeslot}: ${e.message}`);
-    return { success: false, error: e.message };
-  }
-}
-
-function _buildVersion(ssId, sheet) {
-  try {
-    const file = DriveApp.getFileById(ssId);
-    const updated = file.getLastUpdated().getTime();
-    const rows = sheet.getLastRow();
-    const cols = sheet.getLastColumn();
-    return `${updated}-${rows}-${cols}`;
-  } catch (e) {
-    return `${new Date().getTime()}-${sheet.getLastRow()}-${sheet.getLastColumn()}`;
   }
 }
 

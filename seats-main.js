@@ -22,7 +22,6 @@ let isUserInteracting = false; // ユーザーが操作中かどうか
 let interactionTimeout = null; // 操作終了を検知するためのタイマー
 let isSubmittingReservation = false;
 let isSubmittingCheckin = false;
-let lastSeatDataVersion = null;
 
 // APIエンドポイントを設定
 const apiEndpoint = GAS_API_URL;
@@ -67,15 +66,6 @@ window.onload = async () => {
     const currentMode = localStorage.getItem('currentMode') || 'normal';
     const isAdminMode = currentMode === 'admin' || IS_ADMIN;
 
-    // まず軽量バージョンチェック
-    const verResp = await GasAPI.getSeatDataVersion(GROUP, DAY, TIMESLOT);
-    if (verResp && verResp.success && verResp.version === lastSeatDataVersion) {
-      // 変更なしなら描画・取得をスキップ
-      updateLastUpdateTime();
-      startAutoRefresh();
-      return;
-    }
-    
     console.log('GasAPI.getSeatData呼び出し:', { GROUP, DAY, TIMESLOT, isAdminMode });
     const seatData = await GasAPI.getSeatData(GROUP, DAY, TIMESLOT, isAdminMode);
     
@@ -101,7 +91,6 @@ window.onload = async () => {
 
     drawSeatMap(seatData.seatMap);
     updateLastUpdateTime();
-    lastSeatDataVersion = seatData.version || verResp && verResp.version || lastSeatDataVersion;
     updateSelectedSeatsDisplay(); // 初期化時に選択された座席数を更新
     
     // 自動更新設定の初期化
@@ -213,19 +202,12 @@ function startAutoRefresh() {
       
       isRefreshing = true;
       try {
-        // 変更がなければスキップ
-        const v = await GasAPI.getSeatDataVersion(GROUP, DAY, TIMESLOT);
-        if (v && v.success && v.version === lastSeatDataVersion) {
-          // 変更なし
-        } else {
-          const currentMode = localStorage.getItem('currentMode') || 'normal';
-          const isAdminMode = currentMode === 'admin' || IS_ADMIN;
-          const seatData = await GasAPI.getSeatData(GROUP, DAY, TIMESLOT, isAdminMode);
-          if (seatData.success) {
-            drawSeatMap(seatData.seatMap);
-            updateLastUpdateTime();
-            lastSeatDataVersion = seatData.version || (v && v.version) || lastSeatDataVersion;
-          }
+        const currentMode = localStorage.getItem('currentMode') || 'normal';
+        const isAdminMode = currentMode === 'admin' || IS_ADMIN;
+        const seatData = await GasAPI.getSeatData(GROUP, DAY, TIMESLOT, isAdminMode);
+        if (seatData.success) {
+          drawSeatMap(seatData.seatMap);
+          updateLastUpdateTime();
         }
       } catch (error) {
         console.error('自動更新エラー:', error);
