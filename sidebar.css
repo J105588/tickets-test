@@ -158,3 +158,19 @@
 .btn-secondary:hover {
   background-color: #5a6268;
 }
+
+.modal .password-section input[type="password"] {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.modal .modal-buttons .btn-primary,
+.modal .modal-buttons .btn-secondary {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.modal .mode-options {
+  width: 100%;
+  box-sizing: border-box;
+}

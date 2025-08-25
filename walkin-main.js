@@ -51,6 +51,8 @@ async function issueWalkinTicket() {
   const walkinBtn = document.getElementById('walkin-btn');
   const reservationResult = document.getElementById('reservation-result');
   const reservedSeatEl = document.getElementById('reserved-seat');
+  const countInput = document.getElementById('walkin-count');
+  const num = Math.max(1, Math.min(6, parseInt(countInput ? countInput.value : '1', 10) || 1));
   
   walkinBtn.disabled = true;
   walkinBtn.textContent = '空席を検索中...';
@@ -59,22 +61,35 @@ async function issueWalkinTicket() {
   reservationResult.classList.remove('show');
 
   try {
-    const response = await GasAPI.assignWalkInSeat(GROUP, DAY, TIMESLOT);
+    let response;
+    if (num === 1) {
+      response = await GasAPI.assignWalkInSeat(GROUP, DAY, TIMESLOT);
+    } else {
+      response = await GasAPI.assignWalkInSeats(GROUP, DAY, TIMESLOT, num);
+    }
     
     if (response.success) {
       alert(response.message || '座席が確保されました。');
-      walkinBtn.textContent = `発行完了 (座席: ${response.seatId || '不明'})`;
       walkinBtn.style.background = '#28a745';
       
-      if (response.seatId) {
-        reservedSeatEl.textContent = response.seatId;
-        reservationResult.classList.add('show');
+      let seats = [];
+      if (response.seatId) seats = [response.seatId];
+      if (response.seatIds && Array.isArray(response.seatIds)) seats = response.seatIds;
+      
+      // 表示テキスト
+      if (seats.length === 1) {
+        walkinBtn.textContent = `発行完了 (座席: ${seats[0]})`;
+        reservedSeatEl.textContent = seats[0];
+      } else {
+        walkinBtn.textContent = `発行完了 (${seats.length}席)`;
+        reservedSeatEl.textContent = seats.join(' / ');
       }
+      reservationResult.classList.add('show');
       
       setTimeout(() => {
         walkinBtn.disabled = false;
         walkinBtn.textContent = '再度、空席を探して当日券を発行する';
-        walkinBtn.style.background = '#007bff'; // 通常の色に戻す
+        walkinBtn.style.background = '#007bff';
       }, 3000);
     } else {
       alert(response.message || '空席が見つかりませんでした。');
@@ -82,7 +97,7 @@ async function issueWalkinTicket() {
       walkinBtn.textContent = '再度、空席を探す';
     }
   } catch (error) {
-    alert("エラーが発生しました: " + error.message);
+    alert('エラーが発生しました: ' + error.message);
     walkinBtn.disabled = false;
     walkinBtn.textContent = '空席を探して当日券を発行する';
   } finally {

@@ -42,6 +42,7 @@ function doPost(e) {
       'checkInSeat': checkInSeat,
       'checkInMultipleSeats': checkInMultipleSeats,
       'assignWalkInSeat': assignWalkInSeat,
+      'assignWalkInSeats': assignWalkInSeats,
       'verifyModePassword': verifyModePassword,
       'getAllTimeslotsForGroup': getAllTimeslotsForGroup,
       'testApi': testApi
@@ -98,6 +99,7 @@ function doGet(e) {
         'checkInSeat': checkInSeat,
         'checkInMultipleSeats': checkInMultipleSeats,
         'assignWalkInSeat': assignWalkInSeat,
+        'assignWalkInSeats': assignWalkInSeats,
         'verifyModePassword': verifyModePassword,
         'getAllTimeslotsForGroup': getAllTimeslotsForGroup,
         'testApi': testApi
@@ -386,6 +388,48 @@ function assignWalkInSeat(group, day, timeslot) {
       }
     } catch (e) {
       Logger.log(`assignWalkInSeat Error: ${e.message}\n${e.stack}`);
+      return { success: false, message: `エラーが発生しました: ${e.message}` };
+    } finally {
+      lock.releaseLock();
+    }
+  } else {
+    return { success: false, message: "処理が混み合っています。しばらくしてから再度お試しください。" };
+  }
+}
+
+/**
+ * 当日券発行：複数席を自動で探し、確保する。
+ */
+function assignWalkInSeats(group, day, timeslot, count) {
+  const num = Math.max(1, parseInt(count, 10) || 1);
+  const lock = LockService.getScriptLock();
+  if (lock.tryLock(15000)) {
+    try {
+      const sheet = getSheet(group, day, timeslot, 'SEAT');
+      if (!sheet) throw new Error("対象の公演シートが見つかりませんでした。");
+
+      const data = sheet.getRange("A2:C" + sheet.getLastRow()).getValues();
+      const assigned = [];
+
+      for (let i = 0; i < data.length && assigned.length < num; i++) {
+        const seatId = String(data[i][0]) + String(data[i][1]);
+        if (!isValidSeatId(seatId)) continue;
+        if (data[i][2] === '空') {
+          const timestamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy/MM/dd HH:mm:ss");
+          sheet.getRange(i + 2, 3, 1, 3).setValues([["予約済", `当日券_${timestamp}`, '']]);
+          assigned.push(seatId);
+        }
+      }
+
+      if (assigned.length > 0) {
+        SpreadsheetApp.flush();
+        const title = (assigned.length === 1) ? `当日券を発行しました！\n\nあなたの座席は 【${assigned[0]}】 です。` : `当日券を${assigned.length}席発行しました！`;
+        return { success: true, message: title, seatIds: assigned };
+      } else {
+        return { success: false, message: '申し訳ありません、この回の座席は現在満席です。' };
+      }
+    } catch (e) {
+      Logger.log(`assignWalkInSeats Error: ${e.message}\n${e.stack}`);
       return { success: false, message: `エラーが発生しました: ${e.message}` };
     } finally {
       lock.releaseLock();
